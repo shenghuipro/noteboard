@@ -1,0 +1,481 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#5b82fb">
+<title>视觉白板</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="logo1.png">
+<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="vendor/fontawesome-all.min.css">
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/turndown.js"></script>
+<script src="vendor/turndown-plugin-gfm.js"></script>
+<script src="vendor/perfect-freehand.js"></script>
+<script src="vendor/supabase.js"></script>
+</head>
+<body>
+
+        <aside class="sidebar">
+        <div class="tool-item" id="dragNoteBtn" draggable="true"><div class="tool-icon"><i class="fa-solid fa-bars"></i></div><span class="tool-label">Note</span></div>
+        <div class="tool-item" id="dragLinkBtn" draggable="true"><div class="tool-icon"><i class="fa-solid fa-link"></i></div><span class="tool-label">Link</span></div>
+        <div class="tool-item" id="dragTodoBtn" draggable="true"><div class="tool-icon"><i class="fa-solid fa-list-check"></i></div><span class="tool-label">To-do</span></div>
+
+        <div class="tool-item" id="titleBtn" draggable="true">
+            <div class="tool-icon"><i class="fa-solid fa-heading"></i></div>
+            <span class="tool-label">Title</span>
+        </div>
+
+                <div class="tool-item" id="treeBtn">
+            <div class="tool-icon"><i class="fa-solid fa-folder-tree"></i></div>
+            <span class="tool-label">Tree</span>
+        </div>
+
+        <div class="tool-item icon-board" id="dragBoardBtn" draggable="true"><div class="tool-icon"><i class="fa-solid fa-border-all"></i></div><span class="tool-label">Board</span></div>
+        <div class="tool-item" id="dragColumnBtn" draggable="true"><div class="tool-icon"><i class="fa-regular fa-window-maximize"></i></div><span class="tool-label">Column</span></div>
+        <div class="tool-item" id="dragTableBtn" draggable="true"><div class="tool-icon"><i class="fa-solid fa-table"></i></div><span class="tool-label">Table</span></div>
+        <div class="tool-item" id="dragCommentBtn" draggable="true"><div class="tool-icon"><i class="fa-solid fa-comment-dots"></i></div><span class="tool-label">Comment</span></div>
+        <div class="tool-item" id="dragCaptionBtn" draggable="true"><div class="tool-icon"><i class="fa-solid fa-closed-captioning"></i></div><span class="tool-label">Caption</span></div>
+
+        <div class="tool-item icon-transparent" id="moreBtn">
+            <div class="tool-icon"><i class="fa-solid fa-ellipsis"></i></div>
+            <div class="popover-menu" id="popoverMenu">
+                <div class="popover-item"><div class="popover-icon" style="color:#5a6270;"><i class="fa-solid fa-pen-nib"></i></div><span class="popover-label">Sketch</span></div>
+                <div class="popover-item"><div class="popover-icon" style="color:#e91e63;"><i class="fa-solid fa-swatchbook"></i></div><span class="popover-label">Color</span></div>
+                <div class="popover-item"><div class="popover-icon" style="color:#607d8b;"><i class="fa-solid fa-file-lines"></i></div><span class="popover-label">Document</span></div>
+                <div class="popover-item"><div class="popover-icon" style="color:#4caf50;"><i class="fa-solid fa-music"></i></div><span class="popover-label">Audio</span></div>
+                <div class="popover-item"><div class="popover-icon" style="color:#4caf50;"><i class="fa-solid fa-map-location-dot"></i></div><span class="popover-label">Map</span></div>
+                <div class="popover-item"><div class="popover-icon" style="color:#9c27b0;"><i class="fa-solid fa-circle-play"></i></div><span class="popover-label">Video</span></div>
+                <div class="popover-item"><div class="popover-icon" style="color:#5a6270;"><i class="fa-solid fa-heading"></i></div><span class="popover-label">Heading</span></div>
+                <div class="popover-item"><div class="popover-icon" style="color:#5a6270;"><i class="fa-solid fa-table"></i></div><span class="popover-label">Table</span></div>
+                <div class="popover-item"><div class="popover-icon" style="color:#5b82fb;"><i class="fa-solid fa-comment-dots"></i></div><span class="popover-label">Comment</span></div>
+                <div class="popover-item"><div class="popover-icon" style="color:#5a6270;"><i class="fa-regular fa-window-maximize"></i></div><span class="popover-label">Column</span></div>
+            </div>
+        </div>
+
+        <div class="divider"></div>
+        <div class="tool-item"><div class="tool-icon"><i class="fa-regular fa-image"></i></div><span class="tool-label">Add image</span></div>
+        <div class="tool-item" id="uploadFileBtn">
+            <div class="tool-icon"><i class="fa-solid fa-file-arrow-up"></i></div>
+            <span class="tool-label">Upload</span>
+            <input type="file" id="fileInput" style="display: none;" multiple>
+        </div>
+        <div class="tool-item" id="drawBtn"><div class="tool-icon"><i class="fa-solid fa-pen"></i></div><span class="tool-label">Draw</span></div>
+
+        <div class="bottom-tools">
+            <div class="tool-item icon-transparent" id="trashBtn">
+                <div class="tool-icon" style="color:#a0a8b5;"><i class="fa-solid fa-trash-can"></i></div><span class="tool-label" style="color:#a0a8b5;">Trash</span>
+                <div class="trash-popover" id="trashPopover">
+                    <div class="trash-tabs">
+                        <div class="trash-tab active" data-target="my-trash">Deleted by me</div>
+                        <div class="trash-tab" data-target="other-trash">Deleted by others</div>
+                    </div>
+                    <div class="trash-content" id="my-trash">
+                        <div class="empty-state-wrap" id="myTrashEmpty"><i class="fa-solid fa-trash-can" style="font-size: 60px; color: #d0d3d8; margin-bottom: 15px;"></i><p style="font-size: 14px; color: #5a6270;">Your trash is empty</p></div>
+                        <div class="trash-grid" id="myTrashGrid"></div>
+                    </div>
+                    <div class="trash-content hidden" id="other-trash">
+                        <div class="empty-state-wrap"><i class="fa-solid fa-users-slash" style="font-size: 60px; color: #d0d3d8; margin-bottom: 15px;"></i><p style="font-size: 14px; color: #5a6270;">No items deleted by others</p></div>
+                    </div>
+                    <div class="trash-footer">
+                        <button class="empty-trash-btn" id="emptyTrashBtn" disabled><i class="fa-solid fa-fire"></i> 清空垃圾箱</button>
+                    </div>
+
+                    <div class="trash-confirm-overlay" id="trashConfirmOverlay">
+                        <div class="trash-confirm-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                        <div class="trash-confirm-title">确定要清空吗？</div>
+                        <div class="trash-confirm-desc">此操作不可恢复，所有卡片将被永久删除。</div>
+                        <div class="trash-confirm-actions">
+                            <button class="trash-btn-cancel" id="cancelEmptyBtn">取消</button>
+                            <button class="trash-btn-danger" id="confirmEmptyBtn">清空</button>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </aside>
+
+        <main class="viewport" id="viewport">
+        <div class="breadcrumb-container" id="breadcrumbNav"></div>
+        
+        <div class="tree-drawer" id="treeDrawer">
+            <div class="drawer-title"><span>画板层级结构</span><i class="fa-solid fa-arrow-right-arrow-left drawer-close-icon" id="closeTreeBtn"></i></div>
+            <div class="tree-content" id="treeContent"></div>
+        </div>
+
+        <div class="canvas-container" id="canvas">
+            <svg id="linesCanvas" width="100%" height="100%" style="position:absolute; top:0; left:0; overflow:visible; pointer-events:none; z-index:0;">
+                <defs id="lineDefs"></defs> </svg>
+            <svg id="drawLayer" width="100%" height="100%" style="position:absolute; top:0; left:0; overflow:visible; pointer-events:none; z-index:1;"></svg>
+            <div id="lineLabelsContainer" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:1;"></div>
+            <div class="selection-box" id="selectionBox"></div>
+        </div>
+
+        <div class="floating-toolbar" id="floatingToolbar">
+            <button type="button" class="floating-toolbar-btn" data-cmd="bold" title="加粗 (Ctrl+B)"><i class="fa-solid fa-bold"></i></button>
+            <button type="button" class="floating-toolbar-btn" data-cmd="italic" title="倾斜 (Ctrl+I)"><i class="fa-solid fa-italic"></i></button>
+            <button type="button" class="floating-toolbar-btn" data-cmd="underline" title="下划线 (Ctrl+U)"><i class="fa-solid fa-underline"></i></button>
+            <div class="floating-toolbar-divider"></div>
+            <button type="button" class="floating-toolbar-btn" data-cmd="highlight" title="高亮标记"><i class="fa-solid fa-highlighter"></i></button>
+            <button type="button" class="floating-toolbar-btn" data-cmd="code" title="行内代码"><i class="fa-solid fa-code"></i></button>
+            <button type="button" class="floating-toolbar-btn" data-cmd="formula" title="数学公式"><i class="fa-solid fa-square-root-variable"></i></button>
+            <div class="floating-toolbar-divider"></div>
+            <button type="button" class="floating-toolbar-btn" data-cmd="sizeUp" title="增大字号"><i class="fa-solid fa-a" style="font-size: 16px;"></i><i class="fa-solid fa-arrow-up" style="font-size: 10px; margin-left: 2px;"></i></button>
+            <button type="button" class="floating-toolbar-btn" data-cmd="sizeDown" title="减小字号"><i class="fa-solid fa-a" style="font-size: 12px;"></i><i class="fa-solid fa-arrow-down" style="font-size: 10px; margin-left: 2px;"></i></button>
+            <div class="floating-toolbar-divider"></div>
+            <button type="button" class="floating-toolbar-btn" data-cmd="h2" title="转换为标题"><b>H2</b></button>
+            <button type="button" class="floating-toolbar-btn" data-cmd="quote" title="转换为引用"><i class="fa-solid fa-quote-right"></i></button>
+            <div class="floating-toolbar-divider"></div>
+            <button type="button" class="floating-toolbar-btn" data-cmd="link" title="插入超链接"><i class="fa-solid fa-link"></i></button>
+            <button type="button" class="floating-toolbar-btn" data-cmd="inline-comment" title="添加评论"><i class="fa-regular fa-comment"></i></button>
+            <div class="floating-toolbar-btn" title="文字变色" style="position: relative; overflow: hidden;">
+                <input type="color" id="inlineColorPicker" style="position:absolute; top:-10px; left:-10px; width:40px; height:40px; cursor:pointer; opacity:0;">
+                <i class="fa-solid fa-palette"></i>
+            </div>
+        </div>
+
+<!--        <div class="note-toolbar" id="noteToolbar" style="display: none;">-->
+<!--            <div class="note-toolbar-section note-toolbar-format">-->
+<!--                <button type="button" class="note-toolbar-btn" data-note-command="h1" title="标题 H1"><b>H1</b></button>-->
+<!--                <button type="button" class="note-toolbar-btn" data-note-command="bold" title="加粗"><i class="fa-solid fa-bold"></i></button>-->
+<!--                <button type="button" class="note-toolbar-btn" data-note-command="italic" title="倾斜"><i class="fa-solid fa-italic"></i></button>-->
+<!--                <button type="button" class="note-toolbar-btn" data-note-command="strike" title="删除线"><i class="fa-solid fa-strikethrough"></i></button>-->
+<!--                <button type="button" class="note-toolbar-btn" data-note-command="ul" title="无序列表"><i class="fa-solid fa-list-ul"></i></button>-->
+<!--                <button type="button" class="note-toolbar-btn" data-note-command="ol" title="有序列表"><i class="fa-solid fa-list-ol"></i></button>-->
+<!--                <button type="button" class="note-toolbar-btn" data-note-command="quote" title="引用"><i class="fa-solid fa-quote-right"></i></button>-->
+<!--            </div>-->
+<!--            <div class="note-toolbar-divider"></div>-->
+<!--            <div class="note-toolbar-section">-->
+<!--                <span class="note-toolbar-label">Color</span>-->
+<!--                <div class="note-color-swatches">-->
+<!--                    <div class="note-swatch" data-note-accent="#d1d6e0" style="&#45;&#45;swatch: #d1d6e0" title="Default (Gray)"></div>-->
+<!--                    <div class="note-swatch active" data-note-accent="#f59e0b" style="&#45;&#45;swatch: #f59e0b" title="Amber"></div>-->
+<!--                    <div class="note-swatch" data-note-accent="#ef4444" style="&#45;&#45;swatch: #ef4444" title="Red"></div>-->
+<!--                    <div class="note-swatch" data-note-accent="#10b981" style="&#45;&#45;swatch: #10b981" title="Green"></div>-->
+<!--                    <div class="note-swatch" data-note-accent="#3b82f6" style="&#45;&#45;swatch: #3b82f6" title="Blue"></div>-->
+<!--                    <div class="note-swatch" data-note-accent="#8b5cf6" style="&#45;&#45;swatch: #8b5cf6" title="Violet"></div>-->
+<!--                    <div class="note-swatch" data-note-accent="#ec4899" style="&#45;&#45;swatch: #ec4899" title="Pink"></div>-->
+<!--                </div>-->
+<!--                <div class="note-color-input" title="Custom Background Color">-->
+<!--                    <input type="color" id="noteBgColor" value="#ffffff">-->
+<!--                </div>-->
+<!--            </div>-->
+<!--            <div class="note-toolbar-divider"></div>-->
+<!--            <div class="note-toolbar-section">-->
+<!--                <button type="button" class="note-toolbar-btn note-toolbar-primary" id="newNoteBtn"><i class="fa-solid fa-plus"></i> New Note</button>-->
+<!--            </div>-->
+<!--        </div>-->
+
+                <div class="note-toolbar" id="boardToolbar" style="display: none;">
+            <div class="note-toolbar-section">
+                <span class="note-toolbar-label">Icon</span>
+                <button type="button" class="note-toolbar-btn board-icon-btn" data-icon='<i class="fa-solid fa-folder"></i>' title="默认文件夹"><i class="fa-solid fa-folder"></i></button>
+                <button type="button" class="note-toolbar-btn board-icon-btn" data-icon='<i class="fa-solid fa-layer-group"></i>' title="项目分组"><i class="fa-solid fa-layer-group"></i></button>
+                <button type="button" class="note-toolbar-btn board-icon-btn" data-icon='<i class="fa-solid fa-lightbulb"></i>' title="灵感收集"><i class="fa-solid fa-lightbulb"></i></button>
+                <button type="button" class="note-toolbar-btn board-icon-btn" data-icon='<i class="fa-solid fa-star"></i>' title="重要星标"><i class="fa-solid fa-star"></i></button>
+                <button type="button" class="note-toolbar-btn board-icon-btn" data-icon='<i class="fa-solid fa-box-archive"></i>' title="归档库"><i class="fa-solid fa-box-archive"></i></button>
+                <button type="button" class="note-toolbar-btn board-icon-btn" data-icon='<i class="fa-solid fa-image"></i>' title="媒体库"><i class="fa-solid fa-image"></i></button>
+            </div>
+            <div class="note-toolbar-divider"></div>
+            <div class="note-toolbar-section">
+                <button type="button" class="note-toolbar-btn" id="triggerBoardIconUpload" title="上传本地图片作为画板封面"><i class="fa-solid fa-upload"></i> 自定义封面</button>
+                <input type="file" id="boardIconUpload" accept="image/*" style="display: none;">
+            </div>
+                    </div>
+
+        <div class="floating-toolbar" id="floatingLineToolbar">
+            <div class="floating-toolbar-section">
+                <button type="button" class="floating-toolbar-btn line-type-btn" data-type="bezier" title="平滑曲线"><i class="fa-solid fa-bezier-curve"></i></button>
+                <button type="button" class="floating-toolbar-btn line-type-btn" data-type="straight" title="直线"><i class="fa-solid fa-minus"></i></button>
+            </div>
+            <div class="floating-toolbar-divider"></div>
+            <div class="floating-toolbar-section">
+                <button type="button" class="floating-toolbar-btn line-style-btn" data-style="solid" title="实线"><i class="fa-solid fa-minus"></i></button>
+                <button type="button" class="floating-toolbar-btn line-style-btn" data-style="dashed" title="虚线"><i class="fa-solid fa-grip-lines" style="letter-spacing: 2px;"></i></button>
+                <button type="button" class="floating-toolbar-btn line-style-btn" data-style="dotted" title="点线"><i class="fa-solid fa-ellipsis"></i></button>
+            </div>
+            <div class="floating-toolbar-divider"></div>
+            <div class="floating-toolbar-section">
+                <button type="button" class="floating-toolbar-btn line-weight-btn" data-weight="2" title="细"><i class="fa-solid fa-minus" style="font-size: 10px;"></i></button>
+                <button type="button" class="floating-toolbar-btn line-weight-btn" data-weight="4" title="中"><i class="fa-solid fa-minus" style="font-size: 14px;"></i></button>
+                <button type="button" class="floating-toolbar-btn line-weight-btn" data-weight="6" title="粗"><i class="fa-solid fa-minus" style="font-size: 18px;"></i></button>
+            </div>
+            <div class="floating-toolbar-divider"></div>
+            <div class="floating-toolbar-section">
+                <button type="button" class="floating-toolbar-btn line-arrow-btn" data-arrow="none" title="无箭头 (直线)"><i class="fa-solid fa-minus"></i></button>
+                <button type="button" class="floating-toolbar-btn line-arrow-btn" data-arrow="backward" title="左箭头 (反向)"><i class="fa-solid fa-arrow-left"></i></button>
+                <button type="button" class="floating-toolbar-btn line-arrow-btn" data-arrow="forward" title="右箭头 (正向)"><i class="fa-solid fa-arrow-right"></i></button>
+                <button type="button" class="floating-toolbar-btn line-arrow-btn" data-arrow="both" title="双向箭头"><i class="fa-solid fa-arrows-left-right"></i></button>
+            </div>
+            <div class="floating-toolbar-divider"></div>
+            <div class="floating-toolbar-section">
+                <button type="button" class="floating-toolbar-btn line-label-btn" title="添加文字"><span style="font-size: 12px; font-weight: bold; font-family: sans-serif;">[T]</span></button>
+            </div>
+            <div class="floating-toolbar-divider"></div>
+            <div class="floating-toolbar-section" style="gap: 6px; padding: 0 4px;">
+                <div class="line-color-dot" data-color="#a0aab8" style="background:#a0aab8" title="Default (Gray)"></div>
+                <div class="line-color-dot" data-color="#ef4444" style="background:#ef4444" title="Red"></div>
+                <div class="line-color-dot" data-color="#f59e0b" style="background:#f59e0b" title="Amber"></div>
+                <div class="line-color-dot" data-color="#10b981" style="background:#10b981" title="Green"></div>
+                <div class="line-color-dot" data-color="#3b82f6" style="background:#3b82f6" title="Blue"></div>
+                <div class="line-color-custom" title="自定义颜色">
+                    <input type="color" class="line-color-picker" value="#3b82f6">
+                </div>
+            </div>
+        </div>
+<!--            <div class="note-toolbar-divider"></div>-->
+<!--            <div class="note-toolbar-section">-->
+<!--                <button type="button" class="note-toolbar-btn line-style-btn" data-style="solid" title="实线"><i class="fa-solid fa-minus"></i></button>-->
+<!--                <button type="button" class="note-toolbar-btn line-style-btn" data-style="dashed" title="虚线"><i class="fa-solid fa-grip-lines" style="letter-spacing: 2px;"></i></button>-->
+<!--                <button type="button" class="note-toolbar-btn line-style-btn" data-style="dotted" title="点线"><i class="fa-solid fa-ellipsis"></i></button>-->
+<!--            </div>-->
+<!--            <div class="note-toolbar-divider"></div>-->
+<!--            <div class="note-toolbar-section">-->
+<!--                <button type="button" class="note-toolbar-btn line-weight-btn" data-weight="2" title="细"><i class="fa-solid fa-minus" style="font-size: 10px;"></i></button>-->
+<!--                <button type="button" class="note-toolbar-btn line-weight-btn" data-weight="4" title="中"><i class="fa-solid fa-minus" style="font-size: 14px;"></i></button>-->
+<!--                <button type="button" class="note-toolbar-btn line-weight-btn" data-weight="6" title="粗"><i class="fa-solid fa-minus" style="font-size: 18px;"></i></button>-->
+<!--            </div>-->
+<!--            <div class="note-toolbar-divider"></div>-->
+<!--            <div class="note-toolbar-section">-->
+<!--                <button type="button" class="note-toolbar-btn line-arrow-btn" data-arrow="none" title="无箭头"><i class="fa-solid fa-minus"></i></button>-->
+<!--                <button type="button" class="note-toolbar-btn line-arrow-btn" data-arrow="forward" title="单向箭头"><i class="fa-solid fa-arrow-right"></i></button>-->
+<!--                <button type="button" class="note-toolbar-btn line-arrow-btn" data-arrow="both" title="双向箭头"><i class="fa-solid fa-arrows-left-right"></i></button>-->
+<!--            </div>-->
+<!--            <div class="note-toolbar-divider"></div>-->
+<!--            <div class="note-toolbar-section">-->
+<!--                <button type="button" class="note-toolbar-btn line-label-btn" title="添加/编辑文字"><span>[T]</span> Label</button>-->
+<!--            </div>-->
+<!--        </div>-->
+
+        <div class="top-right-actions">
+            <div class="action-btn" id="templateBtn"><i class="fa-solid fa-shapes"></i> 模板库</div>
+            <div class="action-btn" id="transferBtn"><i class="fa-solid fa-inbox"></i> 中转站</div>
+
+                        <div class="action-btn" id="settingsBtn" title="高级选项">
+                <i class="fa-solid fa-gear"></i> 选项
+                <div class="settings-popover" id="settingsPopover">
+                    <div class="settings-item" id="themeToggleMenuBtn"><i class="fa-solid fa-moon" style="color: #607d8b;"></i><span>夜间模式</span></div>
+                    <div class="ctx-divider"></div>
+                    <div class="settings-item" id="importMdMenuBtn"><i class="fa-solid fa-file-import" style="color: #5b82fb;"></i><span>导入 Markdown</span></div>
+                    <div class="settings-item" id="exportMdMenuBtn"><i class="fa-solid fa-file-export" style="color: #5b82fb;"></i><span>导出 Markdown</span></div>
+                    <div class="ctx-divider"></div>
+                    <div class="settings-item" id="importJsonMenuBtn"><i class="fa-solid fa-upload" style="color: #f59e0b;"></i><span>恢复原生备份</span></div>
+                    <div class="settings-item" id="exportJsonMenuBtn"><i class="fa-solid fa-shield-halved" style="color: #f59e0b;"></i><span>导出原生备份</span></div>
+                    <div class="ctx-divider"></div>
+                    <div class="settings-item" id="syncMenuBtn"><i class="fa-solid fa-cloud-arrow-up" style="color: #5b82fb;"></i><span>同步码</span></div>
+                    <div class="ctx-divider"></div>
+                    <div class="settings-item" id="accountMenuBtn"><i class="fa-solid fa-key" style="color: #10b981;"></i><span>账号登录</span></div>
+                </div>
+            </div>
+
+            <input type="file" id="mdFileInput" accept=".md,.txt" style="display: none;">
+            <input type="file" id="jsonFileInput" accept=".json" style="display: none;">
+        </div>
+        <div class="transfer-drawer" id="transferDrawer">
+            <div class="drawer-title"><span>我的中转站</span><i class="fa-solid fa-arrow-right-arrow-left drawer-close-icon" id="closeTransferBtn"></i></div>
+            <div class="empty-state" id="transferEmpty"><i class="fa-regular fa-folder-open" style="font-size: 40px; color: var(--border-color);"></i><p>暂无内容</p></div>
+            <div class="transfer-grid" id="transferGrid"></div>
+        </div>
+        
+        <div class="transfer-drawer" id="templateDrawer">
+            <div class="drawer-title"><span>卡片模板库</span><i class="fa-solid fa-arrow-right-arrow-left drawer-close-icon" id="closeTemplateBtn"></i></div>
+            <div class="template-save-area">
+                <input type="text" id="templateNameInput" placeholder="输入模板名称..." style="width:100%; padding:10px 12px; border:1px solid var(--border-color); border-radius:8px; font-size:13px; outline:none; margin-bottom:8px; color:var(--text-primary); background:var(--card-bg);">
+                <button id="saveTemplateBtn" style="width: 100%; padding: 10px; background: var(--primary-blue); color: #fff; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; transition: all 0.2s;"><i class="fa-solid fa-plus"></i> 保存为模板</button>
+            </div>
+            <div class="empty-state" id="templateEmpty"><i class="fa-solid fa-shapes" style="font-size: 40px; color: var(--border-color); margin-bottom: 10px;"></i><p>暂无模板</p></div>
+            <div class="transfer-grid" id="templateGrid"></div>
+        </div>
+
+        <div class="minimap-container" id="minimap">
+            <div class="minimap-cards" id="minimapCards"></div>
+            <div class="minimap-viewport" id="minimapViewport"></div>
+            <div class="minimap-controls">
+                <div class="minimap-btn" onclick="fitView()" title="自适应视野 (Shift+1)"><i class="fa-solid fa-expand"></i></div>
+                <div class="minimap-btn" onclick="zoomMinimap(1.2)" title="放大地图缩略"><i class="fa-solid fa-plus"></i></div>
+                <div class="minimap-btn" onclick="zoomMinimap(0.8)" title="缩小地图缩略"><i class="fa-solid fa-minus"></i></div>
+            </div>
+        </div>
+
+        <div class="context-menu" id="contextMenu">
+            <div class="ctx-item" data-action="undo"><i class="fa-solid fa-rotate-left"></i> Undo <span style="margin-left:auto;color:#a0aab8;font-size:11px;">Ctrl+Z</span></div>
+            <div class="ctx-item" data-action="redo"><i class="fa-solid fa-rotate-right"></i> Redo <span style="margin-left:auto;color:#a0aab8;font-size:11px;">Ctrl+Y</span></div>
+            <div class="ctx-divider"></div>
+            <div class="ctx-item" data-action="copy"><i class="fa-regular fa-copy"></i> Copy</div>
+            <div class="ctx-item" data-action="paste"><i class="fa-regular fa-paste"></i> Paste</div>
+            <div class="ctx-item" data-action="duplicate"><i class="fa-regular fa-clone"></i> Duplicate</div>
+            <div class="ctx-divider"></div>
+            <div class="ctx-item" data-action="addComment"><i class="fa-regular fa-comment-dots"></i> 评论此卡片</div>
+            <div class="ctx-item" style="color: var(--primary-blue); font-weight: 500;" data-action="tidyUp"><i class="fa-solid fa-wand-magic-sparkles"></i> 整理连线网络</div>
+            <div class="ctx-divider"></div>
+            <div class="ctx-item ctx-info" style="cursor: default; color: #a0aab8; font-size: 11px;" id="ctxLastModified"><i class="fa-regular fa-clock"></i> 修改于: 未知</div>
+            <div class="ctx-divider"></div>
+            <div class="ctx-item" data-action="sendToTransfer"><i class="fa-solid fa-inbox"></i> 添加到中转站</div>
+            <div class="ctx-item" data-action="bringFront"><i class="fa-solid fa-layer-group"></i> Bring to Front</div>
+            <div class="ctx-item" data-action="sendBack"><i class="fa-solid fa-layer-group fa-flip-vertical"></i> Send to Back</div>
+            <div class="ctx-divider"></div>
+            <div class="ctx-item ctx-has-submenu" data-action="colorMenu"><i class="fa-solid fa-palette"></i> 主题/边框颜色 <i class="fa-solid fa-chevron-right" style="float:right;font-size:10px;margin-top:3px;"></i>
+                <div class="ctx-submenu">
+                    <div class="ctx-color-grid" data-target-prop="accent">
+                        <div class="ctx-color-dot" data-color="#d1d6e0" style="background:#d1d6e0" title="Default"></div>
+                        <div class="ctx-color-dot" data-color="#f59e0b" style="background:#f59e0b" title="Amber"></div>
+                        <div class="ctx-color-dot" data-color="#ef4444" style="background:#ef4444" title="Red"></div>
+                        <div class="ctx-color-dot" data-color="#10b981" style="background:#10b981" title="Green"></div>
+                        <div class="ctx-color-dot" data-color="#3b82f6" style="background:#3b82f6" title="Blue"></div>
+                        <div class="ctx-color-dot" data-color="#8b5cf6" style="background:#8b5cf6" title="Violet"></div>
+                        <div class="ctx-color-dot" data-color="#ec4899" style="background:#ec4899" title="Pink"></div>
+                        <div class="ctx-color-custom" title="自定义颜色">
+                            <input type="color" class="ctx-color-picker" value="#5b82fb">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="ctx-item ctx-has-submenu" data-action="bgMenu"><i class="fa-solid fa-fill-drip"></i> 卡片背景颜色 <i class="fa-solid fa-chevron-right" style="float:right;font-size:10px;margin-top:3px;"></i>
+                <div class="ctx-submenu">
+                    <div class="ctx-color-grid" data-target-prop="background">
+                        <div class="ctx-color-dot" data-color="#ffffff" style="background:#ffffff; border: 1px solid #e1e4e8" title="White"></div>
+                        <div class="ctx-color-dot" data-color="#fef3c7" style="background:#fef3c7" title="Light Amber"></div>
+                        <div class="ctx-color-dot" data-color="#fee2e2" style="background:#fee2e2" title="Light Red"></div>
+                        <div class="ctx-color-dot" data-color="#d1fae5" style="background:#d1fae5" title="Light Green"></div>
+                        <div class="ctx-color-dot" data-color="#dbeafe" style="background:#dbeafe" title="Light Blue"></div>
+                        <div class="ctx-color-dot" data-color="#ede9fe" style="background:#ede9fe" title="Light Violet"></div>
+                        <div class="ctx-color-dot" data-color="#fce7f3" style="background:#fce7f3" title="Light Pink"></div>
+                        <div class="ctx-color-custom" title="自定义颜色">
+                            <input type="color" class="ctx-color-picker" value="#ffffff">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="ctx-item" data-action="lock"><i class="fa-solid fa-lock"></i> Lock Position</div>
+            <div class="ctx-divider"></div>
+            <div class="ctx-item ctx-danger" data-action="delete"><i class="fa-solid fa-trash-can"></i> Delete</div>
+        </div>
+
+                <div class="search-bar" id="searchBar">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input type="text" id="searchInput" placeholder="搜索画板、笔记、待办...">
+            <button class="search-close" id="searchClose"><i class="fa-solid fa-xmark"></i></button>
+            
+            <div class="search-results-dropdown" id="searchResultsDropdown">
+                </div>
+        </div>
+
+        <div class="custom-prompt-overlay" id="customLinkPrompt">
+            <div class="custom-prompt-box">
+                <div class="custom-prompt-title">插入超链接</div>
+                <input type="text" class="custom-prompt-input" id="customLinkInput" placeholder="https://..." value="https://">
+                <div class="custom-prompt-actions">
+                    <button class="custom-prompt-btn cancel" id="customLinkCancel">取消</button>
+                    <button class="custom-prompt-btn confirm" id="customLinkConfirm">确定</button>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+
+
+    <div class="account-panel-overlay" id="accountPanelOverlay">
+        <div class="account-panel">
+            <div class="account-panel-header">
+                <span><i class="fa-solid fa-key"></i> 账号登录设置</span>
+                <i class="fa-solid fa-xmark account-panel-close" id="accountPanelClose"></i>
+            </div>
+            <div class="account-tabs">
+                <div class="account-tab active" data-tab="bilibili">
+                    <i class="fa-solid fa-play" style="color:#00a1d6;"></i> B站
+                </div>
+                <div class="account-tab" data-tab="youtube">
+                    <i class="fa-solid fa-play" style="color:#ff0000;"></i> YouTube
+                </div>
+            </div>
+
+            <!-- B站 Tab -->
+            <div class="account-tab-content active" id="tabBilibili">
+                <div class="login-area">
+                    <i class="fa-solid fa-play" style="font-size:48px; color:#00a1d6;"></i>
+                    <div style="font-weight:600; font-size:15px; margin-top:8px;">B站 账号登录</div>
+                    <div class="login-hint">将弹出 B站 官方登录页，支持扫码或账号密码登录</div>
+                    <button class="account-btn account-btn-primary" id="biliLoginBtn">
+                        <i class="fa-solid fa-arrow-right-to-bracket"></i> 打开 B站 登录
+                    </button>
+                    <span class="login-status" id="biliLoginStatus"></span>
+                </div>
+                <div class="cookie-fallback">
+                    <div class="fallback-toggle" id="biliFallbackToggle">
+                        <span>手动粘贴 Cookie</span> <i class="fa-solid fa-chevron-down"></i>
+                    </div>
+                    <div class="fallback-content" id="biliFallbackContent" style="display:none;">
+                        <textarea class="cookie-input" id="bilibiliCookieInput" placeholder="SESSDATA=xxx; bili_jct=xxx; ..."></textarea>
+                        <div class="cookie-actions">
+                            <button class="cookie-btn cookie-btn-save" id="bilibiliSaveBtn"><i class="fa-solid fa-floppy-disk"></i> 保存</button>
+                            <button class="cookie-btn cookie-btn-clear" id="bilibiliClearBtn"><i class="fa-solid fa-trash-can"></i> 清除</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- YouTube Tab -->
+            <div class="account-tab-content" id="tabYoutube">
+                <div class="login-area">
+                    <i class="fa-brands fa-youtube" style="font-size:48px; color:#ff0000;"></i>
+                    <div style="font-weight:600; font-size:15px; margin-top:8px;">YouTube 账号登录</div>
+                    <div class="login-hint">Google 会拦截内置登录；将打开系统浏览器，必要时请手动粘贴 Cookie</div>
+                    <button class="account-btn account-btn-danger" id="ytLoginBtn">
+                        <i class="fa-solid fa-arrow-right-to-bracket"></i> 打开系统浏览器登录
+                    </button>
+                    <span class="login-status" id="ytLoginStatus"></span>
+                </div>
+                <div class="cookie-fallback">
+                    <div class="fallback-toggle" id="ytFallbackToggle">
+                        <span>手动粘贴 Cookie</span> <i class="fa-solid fa-chevron-down"></i>
+                    </div>
+                    <div class="fallback-content" id="ytFallbackContent" style="display:none;">
+                        <textarea class="cookie-input" id="youtubeCookieInput" placeholder="SAPISID=xxx; __Secure-3PAPISID=xxx; ..."></textarea>
+                        <div class="cookie-actions">
+                            <button class="cookie-btn cookie-btn-save" id="youtubeSaveBtn"><i class="fa-solid fa-floppy-disk"></i> 保存</button>
+                            <button class="cookie-btn cookie-btn-clear" id="youtubeClearBtn"><i class="fa-solid fa-trash-can"></i> 清除</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="sync-panel-overlay" id="syncPanelOverlay">
+        <div class="sync-panel">
+            <div class="sync-panel-header">
+                <span><i class="fa-solid fa-cloud-arrow-up"></i> 手机同步</span>
+                <i class="fa-solid fa-xmark sync-panel-close" id="syncPanelClose"></i>
+            </div>
+            <div class="sync-panel-body">
+                <div class="sync-status-row">
+                    <span class="sync-status-pill" id="syncStatusPill">未连接</span>
+                    <span class="sync-config-status" id="syncConfigStatus">等待配置 Supabase</span>
+                </div>
+                <div class="sync-code-display" id="syncCurrentCode">暂无同步码</div>
+                <div class="sync-form-row">
+                    <input class="sync-code-input" id="syncCodeInput" placeholder="输入同步码，例如 NB-ABCD-EFGH-JKLM">
+                    <button class="sync-small-btn" id="syncCopyBtn" title="复制同步码"><i class="fa-regular fa-copy"></i></button>
+                </div>
+                <div class="sync-actions">
+                    <button class="sync-btn sync-btn-primary" id="syncCreateBtn"><i class="fa-solid fa-plus"></i> 创建同步码</button>
+                    <button class="sync-btn" id="syncJoinBtn"><i class="fa-solid fa-link"></i> 加入同步码</button>
+                    <button class="sync-btn" id="syncPullBtn"><i class="fa-solid fa-cloud-arrow-down"></i> 拉取云端</button>
+                    <button class="sync-btn" id="syncPushBtn"><i class="fa-solid fa-cloud-arrow-up"></i> 上传覆盖</button>
+                    <button class="sync-btn sync-btn-danger" id="syncDisconnectBtn"><i class="fa-solid fa-unlink"></i> 断开</button>
+                </div>
+                <div class="sync-hint" id="syncHint">
+                    手机打开 GitHub Pages 网页版后输入同一个同步码，即可拉取这块白板。同步码相当于访问密码，请不要发给不信任的人。
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="sync-config.js"></script>
+    <script src="renderer.js"></script>
+
+</body>
+</html>

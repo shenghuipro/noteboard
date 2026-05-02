@@ -1,0 +1,24 @@
+{
+  "name": "Noteboard",
+  "short_name": "Noteboard",
+  "description": "Visual whiteboard for notes, links, and synced boards.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f2f3f5",
+  "theme_color": "#5b82fb",
+  "icons": [
+    {
+      "src": "logo1.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "logo111.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

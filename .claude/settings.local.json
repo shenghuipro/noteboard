@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e ' *)",
+      "Bash(xxd main.js)",
+      "Bash(cmd /c \"node_modules\\\\electron\\\\dist\\\\electron.exe .\")",
+      "Bash(node_modules/electron/dist/electron.exe --version)",
+      "Bash(node_modules/electron/dist/electron.exe -e \"console.log\\(process.versions.electron\\)\")",
+      "Bash(node_modules/electron/dist/electron.exe test-electron.js)",
+      "Bash(node_modules/electron/dist/electron.exe -e \"console.log\\(module.paths.slice\\(0,10\\)\\)\")",
+      "Bash(rm -rf __TRACKED_VAR__/AppData/Local/electron-builder/Cache/winCodeSign)",
+      "Bash(npx electron-builder *)",
+      "Bash(rm -rf dist/noteboard-win32-x64)",
+      "Bash(npx @electron/packager . noteboard --platform=win32 --arch=x64 --electron-version=34.5.8 --icon=logo.ico --out=dist --overwrite --ignore=\"dist|\\\\.git|\\\\.claude|test-.*\\\\.js|test-.*\\\\.html|node_modules/electron-builder|node_modules/@electron/packager|node_modules/png-to-ico\")",
+      "Bash(cp logo.ico .)",
+      "Bash(cmd /c \"start dist\\\\noteboard-win32-x64\\\\noteboard.exe\")",
+      "Bash(npm uninstall *)",
+      "Bash(npm install *)",
+      "Bash(python -c \"from PIL import Image; print\\('Pillow available'\\)\")",
+      "Bash(python)",
+      "Bash(mkdir -p vendor)",
+      "Bash(curl -sL -o vendor/marked.min.js \"https://cdn.jsdelivr.net/npm/marked/marked.min.js\")",
+      "Bash(curl -sL -o vendor/turndown.js \"https://cdn.jsdelivr.net/npm/turndown/dist/turndown.js\")",
+      "Bash(curl -sL -o vendor/turndown-plugin-gfm.js \"https://cdn.jsdelivr.net/npm/@joplin/turndown-plugin-gfm/dist/turndown-plugin-gfm.js\")",
+      "Bash(curl -sL -o vendor/perfect-freehand.js \"https://cdn.jsdelivr.net/npm/perfect-freehand/dist/perfect-freehand.js\")",
+      "Bash(npm config *)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(mkdir -p vendor/webfonts)",
+      "Bash(npm start *)",
+      "Bash(npm run *)",
+      "Bash(taskkill /F /IM noteboard.exe)",
+      "Bash(cmd /c \"taskkill /F /IM noteboard.exe 2>nul & timeout /t 2 /nobreak >nul\")",
+      "Bash(powershell -Command \"Get-Process -Name noteboard -ErrorAction SilentlyContinue | Stop-Process -Force\")"
+    ]
+  }
+}

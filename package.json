@@ -1,0 +1,27 @@
+{
+  "name": "noteboard",
+  "version": "1.0.0",
+  "description": "Visual whiteboard for notes, links, and video transcripts",
+  "main": "main.js",
+  "scripts": {
+    "start": "node start-electron.js",
+    "build:pages": "node scripts/build-pages.js",
+    "build": "npx @electron/packager . noteboard --platform=win32 --arch=x64 --electron-version=34.5.8 --icon=logo.ico --out=dist --overwrite --ignore=\"dist|\\.git|\\.claude|test-.*\\.js|test-.*\\.html|node_modules/electron-builder|node_modules/@electron/packager|node_modules/png-to-ico\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@electron/packager": "^20.0.0",
+    "electron": "^34.5.8"
+  },
+  "dependencies": {
+    "@fortawesome/fontawesome-free": "^7.2.0",
+    "@joplin/turndown-plugin-gfm": "^1.0.64",
+    "@supabase/supabase-js": "^2.57.4",
+    "lodash": "^4.18.1",
+    "marked": "^18.0.0",
+    "perfect-freehand": "^1.2.3",
+    "turndown": "^7.2.4"
+  }
+}
