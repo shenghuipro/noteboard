@@ -662,6 +662,29 @@
             return `M ${p1.x} ${p1.y} C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${p2.x} ${p2.y}`;
         }
 
+        function connectCards(fromCard, toCard) {
+            if (!fromCard || !toCard || fromCard === toCard) return false;
+            if (!fromCard.id) fromCard.id = 'card-' + Date.now() + Math.floor(Math.random() * 100000);
+            if (!toCard.id) toCard.id = 'card-' + Date.now() + Math.floor(Math.random() * 100000);
+            lines.push({
+                id: 'line-' + Date.now(),
+                from: fromCard.id,
+                to: toCard.id,
+                color: '#a0aab8',
+                type: 'bezier',
+                style: 'solid',
+                weight: 3,
+                arrow: 'forward',
+                label: ''
+            });
+            renderLines();
+            scheduleSaveState();
+            setTimeout(() => {
+                checkAndTriggerAutomation(fromCard.id, toCard.id);
+            }, 100);
+            return true;
+        }
+
         // 核心算法3：精准计算线条中点坐标，用于放置文字标签
         function getLineMidpoint(p1, p2, a1, a2, type) {
             if (type === 'straight') return { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
@@ -966,6 +989,7 @@
             }
             const flt = document.getElementById('floatingLineToolbar');
             if (flt) flt.classList.remove('show');
+            if (window.noteboardMobile?.updateBars) window.noteboardMobile.updateBars();
         }
 
         function placeCaretAtEnd(node) {
@@ -5060,6 +5084,455 @@
             }
             updateAllBoardCounts(); updateMinimap();
         });
+
+        // ================= Mobile interaction mode =================
+        (function initMobileMode() {
+            const MOBILE_PREF_KEY = 'noteboard-mobile-mode-pref';
+            const LONG_PRESS_MS = 420;
+            const TAP_MOVE_TOLERANCE = 9;
+            let mobileMode = false;
+            let mobileCardMoveMode = false;
+            let mobileLinkFrom = null;
+            let mobileTouchState = null;
+            let mobileLongPressTimer = null;
+            let mobileControlsReady = false;
+
+            function prefersMobileMode() {
+                const pref = localStorage.getItem(MOBILE_PREF_KEY);
+                if (pref === 'mobile') return true;
+                if (pref === 'desktop') return false;
+                return window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 820;
+            }
+
+            function isMobileUiTarget(target) {
+                return !!target.closest('.mobile-bottom-bar, .mobile-add-sheet, .mobile-card-actions, .settings-popover, .account-panel-overlay, .sync-panel-overlay, .transfer-drawer, .template-drawer, .trash-popover, .context-menu, .search-bar, .note-toolbar, .floating-toolbar');
+            }
+
+            function isEditableTouchTarget(target) {
+                return !!target.closest('input, textarea, button, select, iframe, webview, video, audio, [contenteditable="true"], .todo-checkbox, .todo-add-btn, .comment-input-box, .bili-quality-controls, .youtube-source-controls, [data-open-url]');
+            }
+
+            function getCanvasPointFromClient(clientX, clientY) {
+                return getCanvasCoords({ clientX, clientY });
+            }
+
+            function getViewportCenterPoint() {
+                const rect = viewport.getBoundingClientRect();
+                return {
+                    x: (rect.width / 2 - panX) / scale,
+                    y: (rect.height / 2 - panY) / scale
+                };
+            }
+
+            function selectSingleCard(card) {
+                if (!card) return;
+                clearCardSelection();
+                card.classList.add('selected');
+                updateNoteToolbar(card.classList.contains('note-card') ? card : null);
+                updateBoardToolbar(card.classList.contains('board-card') ? card : null);
+                updateMobileBars();
+            }
+
+            function createMobileCard(type) {
+                const center = getViewportCenterPoint();
+                let card = null;
+                if (type === 'note') {
+                    card = createQuickNoteAt(center.x - 160, center.y - 90);
+                } else if (type === 'link') {
+                    card = createLinkCard(center.x - 190, center.y - 40, '');
+                    requestAnimationFrame(() => {
+                        selectSingleCard(card);
+                        const input = card.querySelector('.link-input');
+                        if (input) input.focus();
+                    });
+                } else if (type === 'todo') {
+                    card = createTodoCard(center.x - 130, center.y - 80, '', 260, 160);
+                } else if (type === 'board') {
+                    card = createBoardCard(center.x - 80, center.y - 80);
+                } else if (type === 'column') {
+                    card = createColumnCard(center.x - 200, center.y - 160);
+                } else if (type === 'image') {
+                    if (fileInput) fileInput.click();
+                    return;
+                }
+                if (card) {
+                    selectSingleCard(card);
+                    updateAllBoardCounts();
+                    updateMinimap();
+                    scheduleSaveState();
+                }
+            }
+
+            function enterMobileEdit(card) {
+                if (!card) return;
+                if (card.classList.contains('note-card')) {
+                    focusNoteEditor(card, false);
+                } else if (card.classList.contains('link-card')) {
+                    const input = card.querySelector('.link-input');
+                    card.classList.add('is-editing');
+                    if (input) input.focus();
+                } else if (card.classList.contains('todo-card')) {
+                    card.classList.add('is-editing');
+                    const text = card.querySelector('.todo-text');
+                    if (text) {
+                        text.setAttribute('contenteditable', 'true');
+                        text.focus();
+                        placeCaretAtEnd(text);
+                    }
+                } else if (card.classList.contains('board-card')) {
+                    const title = card.querySelector('.board-title');
+                    card.classList.add('is-editing');
+                    if (title) {
+                        title.setAttribute('contenteditable', 'true');
+                        title.focus();
+                        placeCaretAtEnd(title);
+                    }
+                } else if (card.classList.contains('column-card')) {
+                    const title = card.querySelector('.column-title');
+                    card.classList.add('is-editing');
+                    if (title) {
+                        title.setAttribute('contenteditable', 'true');
+                        title.focus();
+                        placeCaretAtEnd(title);
+                    }
+                } else if (card.classList.contains('heading-card')) {
+                    const text = card.querySelector('.heading-text');
+                    card.classList.add('is-editing');
+                    if (text) {
+                        text.setAttribute('contenteditable', 'true');
+                        text.focus();
+                        placeCaretAtEnd(text);
+                    }
+                }
+                updateMobileBars();
+            }
+
+            function ensureMobileControls() {
+                if (mobileControlsReady) return;
+                mobileControlsReady = true;
+
+                const bottomBar = document.createElement('div');
+                bottomBar.className = 'mobile-bottom-bar';
+                bottomBar.innerHTML = `
+                    <button type="button" class="mobile-bar-btn mobile-add-btn" data-mobile-action="add"><i class="fa-solid fa-plus"></i><span>添加</span></button>
+                    <button type="button" class="mobile-bar-btn" data-mobile-action="search"><i class="fa-solid fa-magnifying-glass"></i><span>搜索</span></button>
+                    <button type="button" class="mobile-bar-btn" data-mobile-action="fit"><i class="fa-solid fa-expand"></i><span>全览</span></button>
+                    <button type="button" class="mobile-bar-btn" data-mobile-action="toggle"><i class="fa-solid fa-display"></i><span>桌面</span></button>
+                `;
+                document.body.appendChild(bottomBar);
+
+                const addSheet = document.createElement('div');
+                addSheet.className = 'mobile-add-sheet';
+                addSheet.innerHTML = `
+                    <div class="mobile-sheet-handle"></div>
+                    <div class="mobile-sheet-title">添加到白板</div>
+                    <div class="mobile-create-grid">
+                        <button type="button" data-mobile-create="note"><i class="fa-solid fa-bars"></i><span>Note</span></button>
+                        <button type="button" data-mobile-create="link"><i class="fa-solid fa-link"></i><span>Link</span></button>
+                        <button type="button" data-mobile-create="todo"><i class="fa-solid fa-list-check"></i><span>To-do</span></button>
+                        <button type="button" data-mobile-create="board"><i class="fa-solid fa-border-all"></i><span>Board</span></button>
+                        <button type="button" data-mobile-create="column"><i class="fa-regular fa-window-maximize"></i><span>Column</span></button>
+                        <button type="button" data-mobile-create="image"><i class="fa-regular fa-image"></i><span>Image</span></button>
+                    </div>
+                `;
+                document.body.appendChild(addSheet);
+
+                const cardActions = document.createElement('div');
+                cardActions.className = 'mobile-card-actions';
+                cardActions.innerHTML = `
+                    <button type="button" class="mobile-card-action" data-mobile-card-action="move"><i class="fa-solid fa-up-down-left-right"></i><span>移动</span></button>
+                    <button type="button" class="mobile-card-action" data-mobile-card-action="edit"><i class="fa-solid fa-pen"></i><span>编辑</span></button>
+                    <button type="button" class="mobile-card-action" data-mobile-card-action="link"><i class="fa-solid fa-arrow-right-long"></i><span>连线</span></button>
+                    <button type="button" class="mobile-card-action danger" data-mobile-card-action="delete"><i class="fa-solid fa-trash-can"></i><span>删除</span></button>
+                `;
+                document.body.appendChild(cardActions);
+
+                bottomBar.addEventListener('click', (e) => {
+                    const action = e.target.closest('[data-mobile-action]')?.dataset.mobileAction;
+                    if (!action) return;
+                    e.stopPropagation();
+                    if (action === 'add') toggleMobileAddSheet();
+                    if (action === 'search') {
+                        const searchBar = document.getElementById('searchBar');
+                        const searchInput = document.getElementById('searchInput');
+                        if (searchBar) searchBar.classList.add('show');
+                        if (searchInput) searchInput.focus();
+                    }
+                    if (action === 'fit') fitView();
+                    if (action === 'toggle') setMobileMode(false, true);
+                });
+
+                addSheet.addEventListener('click', (e) => {
+                    const type = e.target.closest('[data-mobile-create]')?.dataset.mobileCreate;
+                    if (!type) return;
+                    e.stopPropagation();
+                    toggleMobileAddSheet(false);
+                    createMobileCard(type);
+                });
+
+                cardActions.addEventListener('click', (e) => {
+                    const action = e.target.closest('[data-mobile-card-action]')?.dataset.mobileCardAction;
+                    if (!action) return;
+                    e.stopPropagation();
+                    const selected = Array.from(document.querySelectorAll('.card.selected')).filter(card => card.dataset.boardId === getActiveBoard());
+                    const card = selected[0];
+                    if (action === 'move') {
+                        mobileCardMoveMode = !mobileCardMoveMode;
+                        mobileLinkFrom = null;
+                        showToast(mobileCardMoveMode ? '触摸并拖动选中卡片' : '已退出移动模式', 'info', 1600);
+                    } else if (action === 'edit') {
+                        enterMobileEdit(card);
+                    } else if (action === 'link') {
+                        if (!card) return;
+                        mobileCardMoveMode = false;
+                        mobileLinkFrom = card;
+                        showToast('再点另一张卡片即可连线', 'info', 2000);
+                    } else if (action === 'delete') {
+                        deleteSelectedCards();
+                        mobileCardMoveMode = false;
+                        mobileLinkFrom = null;
+                    }
+                    updateMobileBars();
+                });
+            }
+
+            function toggleMobileAddSheet(force) {
+                const sheet = document.querySelector('.mobile-add-sheet');
+                if (!sheet) return;
+                const show = typeof force === 'boolean' ? force : !sheet.classList.contains('show');
+                sheet.classList.toggle('show', show);
+            }
+
+            function updateMobileBars() {
+                ensureMobileControls();
+                const selected = Array.from(document.querySelectorAll('.card.selected')).filter(card => card.dataset.boardId === getActiveBoard());
+                const cardActions = document.querySelector('.mobile-card-actions');
+                const moveBtn = cardActions?.querySelector('[data-mobile-card-action="move"]');
+                const linkBtn = cardActions?.querySelector('[data-mobile-card-action="link"]');
+                if (cardActions) cardActions.classList.toggle('show', mobileMode && selected.length > 0);
+                if (moveBtn) moveBtn.classList.toggle('active', !!mobileCardMoveMode);
+                if (linkBtn) linkBtn.classList.toggle('active', !!mobileLinkFrom);
+                const menuBtn = document.getElementById('mobileModeMenuBtn');
+                if (menuBtn) {
+                    const span = menuBtn.querySelector('span');
+                    const icon = menuBtn.querySelector('i');
+                    if (span) span.textContent = mobileMode ? '退出手机模式' : '手机模式';
+                    if (icon) icon.className = mobileMode ? 'fa-solid fa-display' : 'fa-solid fa-mobile-screen-button';
+                }
+            }
+
+            function setMobileMode(enabled, persist = false) {
+                ensureMobileControls();
+                mobileMode = !!enabled;
+                document.body.classList.toggle('mobile-mode', mobileMode);
+                if (!mobileMode) {
+                    toggleMobileAddSheet(false);
+                    mobileCardMoveMode = false;
+                    mobileLinkFrom = null;
+                    mobileTouchState = null;
+                    clearTimeout(mobileLongPressTimer);
+                    viewport.classList.remove('is-panning');
+                    document.querySelectorAll('.card.mobile-dragging').forEach(card => card.classList.remove('mobile-dragging'));
+                }
+                if (persist) localStorage.setItem(MOBILE_PREF_KEY, mobileMode ? 'mobile' : 'desktop');
+                updateMobileBars();
+            }
+
+            function startMobileCardDrag(card, touch, fromLongPress = false) {
+                if (!card || card.classList.contains('nested-card')) return;
+                if (!card.classList.contains('selected')) selectSingleCard(card);
+                const cPos = getCanvasPointFromClient(touch.clientX, touch.clientY);
+                dragStartCanvasPos = { x: cPos.x, y: cPos.y };
+                globalMouseDownX = touch.clientX;
+                globalMouseDownY = touch.clientY;
+                draggedCards = Array.from(document.querySelectorAll('.card.selected')).map(c => ({
+                    el: c,
+                    startX: parseFloat(c.style.left) || 0,
+                    startY: parseFloat(c.style.top) || 0,
+                    isNested: c.classList.contains('nested-card'),
+                    initialRect: c.getBoundingClientRect()
+                }));
+                mobileTouchState = { type: 'card-drag', fromLongPress };
+                isDraggingCard = true;
+                hasStartedDraggingMove = true;
+                setBoardInteractionActive(true);
+                card.classList.add('mobile-dragging');
+                if (fromLongPress) showToast('拖动卡片，松手放下', 'info', 1200);
+            }
+
+            function finishMobileCardDrag() {
+                if (!isDraggingCard || draggedCards.length === 0) return;
+                draggedCards.forEach(item => {
+                    item.el.dataset.boardId = getActiveBoard();
+                    item.el.classList.remove('mobile-dragging');
+                });
+                isDraggingCard = false;
+                hasStartedDraggingMove = false;
+                draggedCards = [];
+                mobileCardMoveMode = false;
+                setBoardInteractionActive(false);
+                renderLines();
+                updateMinimap();
+                scheduleSaveState();
+                updateMobileBars();
+            }
+
+            viewport.addEventListener('touchstart', (e) => {
+                if (!mobileMode || isMobileUiTarget(e.target)) return;
+                clearTimeout(mobileLongPressTimer);
+                const touches = Array.from(e.touches);
+                if (touches.length >= 2) {
+                    e.preventDefault();
+                    const a = touches[0], b = touches[1];
+                    const centerClient = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+                    mobileTouchState = {
+                        type: 'pinch',
+                        startDistance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+                        startScale: scale,
+                        centerClient,
+                        centerCanvas: getCanvasPointFromClient(centerClient.x, centerClient.y)
+                    };
+                    return;
+                }
+
+                const touch = touches[0];
+                const card = e.target.closest('.card');
+                if (card) {
+                    if (mobileCardMoveMode && card.classList.contains('selected') && !isEditableTouchTarget(e.target)) {
+                        e.preventDefault();
+                        startMobileCardDrag(card, touch);
+                        return;
+                    }
+                    mobileTouchState = {
+                        type: 'card-pending',
+                        card,
+                        startClientX: touch.clientX,
+                        startClientY: touch.clientY
+                    };
+                    if (!isEditableTouchTarget(e.target)) {
+                        mobileLongPressTimer = setTimeout(() => {
+                            startMobileCardDrag(card, touch, true);
+                        }, LONG_PRESS_MS);
+                    }
+                    return;
+                }
+
+                if (e.target === viewport || e.target === canvas) {
+                    e.preventDefault();
+                    toggleMobileAddSheet(false);
+                    mobileLinkFrom = null;
+                    mobileCardMoveMode = false;
+                    clearCardSelection();
+                    updateMobileBars();
+                    mobileTouchState = {
+                        type: 'pan',
+                        startClientX: touch.clientX,
+                        startClientY: touch.clientY,
+                        startPanX: panX,
+                        startPanY: panY
+                    };
+                    viewport.classList.add('is-panning');
+                }
+            }, { passive: false });
+
+            viewport.addEventListener('touchmove', (e) => {
+                if (!mobileMode || !mobileTouchState) return;
+                const touches = Array.from(e.touches);
+                if (mobileTouchState.type === 'pinch' && touches.length >= 2) {
+                    e.preventDefault();
+                    const a = touches[0], b = touches[1];
+                    const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+                    let nextScale = mobileTouchState.startScale * (distance / Math.max(1, mobileTouchState.startDistance));
+                    nextScale = Math.max(0.08, Math.min(5, nextScale));
+                    const rect = viewport.getBoundingClientRect();
+                    const cx = mobileTouchState.centerClient.x - rect.left;
+                    const cy = mobileTouchState.centerClient.y - rect.top;
+                    scale = nextScale;
+                    panX = cx - mobileTouchState.centerCanvas.x * scale;
+                    panY = cy - mobileTouchState.centerCanvas.y * scale;
+                    applyTransform();
+                    return;
+                }
+
+                const touch = touches[0];
+                if (!touch) return;
+                if (mobileTouchState.type === 'pan') {
+                    e.preventDefault();
+                    panX = mobileTouchState.startPanX + (touch.clientX - mobileTouchState.startClientX);
+                    panY = mobileTouchState.startPanY + (touch.clientY - mobileTouchState.startClientY);
+                    applyTransform();
+                    return;
+                }
+
+                if (mobileTouchState.type === 'card-pending') {
+                    const moved = Math.hypot(touch.clientX - mobileTouchState.startClientX, touch.clientY - mobileTouchState.startClientY);
+                    if (moved > TAP_MOVE_TOLERANCE) clearTimeout(mobileLongPressTimer);
+                    return;
+                }
+
+                if (mobileTouchState.type === 'card-drag') {
+                    e.preventDefault();
+                    const cPos = getCanvasPointFromClient(touch.clientX, touch.clientY);
+                    const dx = cPos.x - dragStartCanvasPos.x;
+                    const dy = cPos.y - dragStartCanvasPos.y;
+                    draggedCards.forEach(item => {
+                        item.el.style.left = (item.startX + dx) + 'px';
+                        item.el.style.top = (item.startY + dy) + 'px';
+                    });
+                    renderLines();
+                    updateMinimap();
+                }
+            }, { passive: false });
+
+            viewport.addEventListener('touchend', () => {
+                if (!mobileMode) return;
+                clearTimeout(mobileLongPressTimer);
+                if (mobileTouchState?.type === 'card-drag') finishMobileCardDrag();
+                if (mobileTouchState?.type === 'pan' || mobileTouchState?.type === 'pinch') {
+                    viewport.classList.remove('is-panning');
+                    scheduleSaveState(true);
+                    updateMinimap();
+                }
+                mobileTouchState = null;
+                setTimeout(updateMobileBars, 0);
+            }, { passive: true });
+
+            document.addEventListener('click', (e) => {
+                if (!mobileMode || isMobileUiTarget(e.target)) return;
+                const card = e.target.closest('.card');
+                if (mobileLinkFrom) {
+                    if (card && card !== mobileLinkFrom) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        connectCards(mobileLinkFrom, card);
+                        mobileLinkFrom = null;
+                        showToast('连线已建立', 'success', 1400);
+                    } else if (!card) {
+                        mobileLinkFrom = null;
+                    }
+                    updateMobileBars();
+                    return;
+                }
+                if (card) setTimeout(updateMobileBars, 0);
+            }, true);
+
+            const mobileModeMenuBtn = document.getElementById('mobileModeMenuBtn');
+            if (mobileModeMenuBtn) {
+                mobileModeMenuBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const settingsPopover = document.getElementById('settingsPopover');
+                    if (settingsPopover) settingsPopover.classList.remove('show');
+                    setMobileMode(!mobileMode, true);
+                });
+            }
+
+            window.addEventListener('resize', () => {
+                if (!localStorage.getItem(MOBILE_PREF_KEY)) setMobileMode(prefersMobileMode(), false);
+            });
+            window.noteboardMobile = { setMobileMode, updateBars: updateMobileBars };
+            ensureMobileControls();
+            setMobileMode(prefersMobileMode(), false);
+        })();
 
         function checkTrashEmptyState() {
             const isEmpty = document.getElementById('myTrashGrid').children.length === 0;
