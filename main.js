@@ -1,7 +1,9 @@
 const { app, BrowserWindow, ipcMain, session, shell } = require('electron')
+const crypto = require('crypto')
 const fs = require('fs')
 const http = require('http')
 const path = require('path')
+const { pathToFileURL } = require('url')
 
 const DESKTOP_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
 const VIDEO_PARTITION = 'persist:noteboard-videos'
@@ -23,11 +25,47 @@ const MIME_TYPES = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf'
+}
+
+const IMAGE_ASSET_EXTENSIONS = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/avif': 'avif',
+  'image/bmp': 'bmp',
+  'image/svg+xml': 'svg'
+}
+
+async function saveImageAsset(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/)
+  if (!match) throw new Error('Invalid image data URL')
+
+  const mime = match[1].toLowerCase()
+  const ext = IMAGE_ASSET_EXTENSIONS[mime] || 'img'
+  const dir = path.join(app.getPath('userData'), 'image-assets')
+  await fs.promises.mkdir(dir, { recursive: true })
+
+  const name = `image-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`
+  const filePath = path.join(dir, name)
+  const buffer = Buffer.from(match[2], 'base64')
+  await fs.promises.writeFile(filePath, buffer)
+
+  return {
+    url: pathToFileURL(filePath).href,
+    filePath,
+    mime,
+    size: buffer.length
+  }
 }
 
 function startLocalAppServer() {
@@ -445,6 +483,10 @@ ipcMain.handle('open-external-url', (_event, url) => {
 
 ipcMain.handle('get-local-player-origin', () => {
   return localAppOrigin
+})
+
+ipcMain.handle('save-image-asset', (_event, payload) => {
+  return saveImageAsset(payload?.dataUrl)
 })
 
 ipcMain.handle('set-site-cookies', (_event, site, cookieHeader) => {

@@ -130,9 +130,27 @@
             <div class="floating-toolbar-divider"></div>
             <button type="button" class="floating-toolbar-btn" data-cmd="link" title="插入超链接"><i class="fa-solid fa-link"></i></button>
             <button type="button" class="floating-toolbar-btn" data-cmd="inline-comment" title="添加评论"><i class="fa-regular fa-comment"></i></button>
-            <div class="floating-toolbar-btn" title="文字变色" style="position: relative; overflow: hidden;">
-                <input type="color" id="inlineColorPicker" style="position:absolute; top:-10px; left:-10px; width:40px; height:40px; cursor:pointer; opacity:0;">
+            <div class="floating-toolbar-btn text-color-btn" title="文字变色" style="position: relative;">
                 <i class="fa-solid fa-palette"></i>
+                <div class="text-color-dropdown" id="textColorDropdown">
+                    <div class="text-color-presets" id="textColorPresets">
+                        <div class="text-color-swatch" data-color="#000000" title="默认颜色" style="background:#000000;"></div>
+                        <div class="text-color-swatch" data-color="#e74c3c" title="红色" style="background:#e74c3c;"></div>
+                        <div class="text-color-swatch" data-color="#e67e22" title="橙色" style="background:#e67e22;"></div>
+                        <div class="text-color-swatch" data-color="#f1c40f" title="黄色" style="background:#f1c40f;"></div>
+                        <div class="text-color-swatch" data-color="#27ae60" title="绿色" style="background:#27ae60;"></div>
+                        <div class="text-color-swatch" data-color="#2980b9" title="蓝色" style="background:#2980b9;"></div>
+                        <div class="text-color-swatch" data-color="#8e44ad" title="紫色" style="background:#8e44ad;"></div>
+                        <div class="text-color-swatch" data-color="#7f8c8d" title="灰色" style="background:#7f8c8d;"></div>
+                    </div>
+                    <div class="text-color-actions">
+                        <button type="button" class="text-color-default-btn" id="textColorDefault" title="恢复默认颜色">默认颜色</button>
+                        <label class="text-color-custom-btn" title="自定义颜色">
+                            <input type="color" id="inlineColorPicker" class="text-color-input">
+                            <i class="fa-solid fa-eye-dropper"></i>
+                        </label>
+                    </div>
+                </div>
             </div>
         </div>
 

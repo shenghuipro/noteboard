@@ -345,6 +345,97 @@ body { width: 100vw; height: 100vh; display: flex; overflow: hidden; background-
     color: var(--primary-blue);
 }
 
+/* 文字颜色预设下拉面板 */
+.text-color-btn { position: relative; }
+.text-color-dropdown {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(255,255,255,0.97);
+    border: 1px solid rgba(209,214,224,0.8);
+    border-radius: 10px;
+    padding: 8px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+    z-index: 10;
+    min-width: 160px;
+}
+.text-color-dropdown.open {
+    display: block;
+}
+.text-color-presets {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin-bottom: 8px;
+}
+.text-color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.15s, border-color 0.15s;
+}
+.text-color-swatch:hover {
+    transform: scale(1.15);
+    border-color: var(--primary-blue);
+}
+.text-color-swatch[data-color="#000000"] {
+    border: 2px solid rgba(209,214,224,0.6);
+}
+.text-color-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-top: 1px solid rgba(209,214,224,0.6);
+    padding-top: 6px;
+}
+.text-color-default-btn {
+    flex: 1;
+    background: rgba(91,130,251,0.08);
+    border: 1px solid rgba(91,130,251,0.3);
+    border-radius: 6px;
+    color: var(--primary-blue);
+    font-size: 12px;
+    padding: 4px 0;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.text-color-default-btn:hover {
+    background: rgba(91,130,251,0.18);
+}
+.text-color-custom-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid rgba(209,214,224,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    transition: background 0.15s;
+}
+.text-color-custom-btn:hover {
+    background: rgba(91,130,251,0.1);
+}
+.text-color-input {
+    position: absolute;
+    top: -10px;
+    left: -10px;
+    width: 50px;
+    height: 50px;
+    cursor: pointer;
+    opacity: 0;
+}
+body.dark-mode .text-color-dropdown {
+    background: rgba(30,35,45,0.97);
+    border-color: rgba(60,65,75,0.8);
+}
+
 /* 核心新增：连线悬浮菜单专属颜色选项样式 */
 .line-color-dot { width: 20px; height: 20px; border-radius: 50%; cursor: pointer; border: 1px solid rgba(0,0,0,0.1); transition: transform 0.15s, box-shadow 0.15s; }
 .line-color-dot:hover { transform: scale(1.15); }

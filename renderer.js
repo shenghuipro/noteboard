@@ -421,7 +421,18 @@
             }, 100);
         }
 
+        const MINIMAP_REBUILD_DELAY = 260;
+        const MINIMAP_MAX_RENDERED_CARDS = 900;
         let minimapThrottleTimer = null;
+
+        function queueMinimapRebuild(delay = MINIMAP_REBUILD_DELAY) {
+            clearTimeout(minimapThrottleTimer);
+            minimapThrottleTimer = setTimeout(() => {
+                minimapThrottleTimer = null;
+                updateMinimap();
+            }, delay);
+        }
+
         function applyTransform() {
             // 🌟 核心注入：将当前物理缩放比例暴露给 CSS，用于锚点反向补偿放大
             document.documentElement.style.setProperty('--board-scale', scale);
@@ -429,14 +440,9 @@
             canvas.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${scale})`;
             viewport.style.backgroundPosition = `${panX}px ${panY}px`;
             
-            // 🌟 核心提速：分离地图的高频动作。让蓝框跟随鼠标实时 60fps 移动，但底层地图卡片 DOM 节流每 100ms 刷新一次
+            // Keep the viewport box live, but rebuild minimap cards only after movement settles.
             updateMinimapViewportOnly();
-            if (!minimapThrottleTimer) {
-                minimapThrottleTimer = setTimeout(() => {
-                    updateMinimap();
-                    minimapThrottleTimer = null;
-                }, 100);
-            }
+            queueMinimapRebuild();
         }
         
         function updateMinimapViewportOnly() {
@@ -534,19 +540,26 @@
         let mmState = { scale: 1, minX: 0, minY: 0, offsetX: 0, offsetY: 0 };
 
         function updateMinimap() {
+            if (minimapThrottleTimer) {
+                clearTimeout(minimapThrottleTimer);
+                minimapThrottleTimer = null;
+            }
             const mmContainer = document.getElementById('minimap');
             const mmCards = document.getElementById('minimapCards');
             const vpBox = document.getElementById('minimapViewport');
+            if (!mmContainer || !mmCards || !vpBox) return;
             const mmW = mmContainer.clientWidth, mmH = mmContainer.clientHeight;
             const vpX = -panX / scale, vpY = -panY / scale;
             const vpW = viewport.clientWidth / scale, vpH = viewport.clientHeight / scale;
 
             let minX = vpX, minY = vpY, maxX = vpX + vpW, maxY = vpY + vpH;
 
-            const rootCards = Array.from(document.querySelectorAll('.card:not(.nested-card)')).filter(c => c.dataset.boardId === getActiveBoard());
-            rootCards.forEach(c => {
-                const cx = parseFloat(c.style.left), cy = parseFloat(c.style.top);
-                const cw = parseFloat(c.style.width) || c.offsetWidth, ch = parseFloat(c.style.height) || c.offsetHeight;
+            const currentBoard = getActiveBoard();
+            const rootCardBoxes = Array.from(document.querySelectorAll('.card:not(.nested-card)'))
+                .filter(card => card.dataset.boardId === currentBoard)
+                .map(card => ({ card, box: getCardCanvasBox(card) }));
+            rootCardBoxes.forEach(({ box }) => {
+                const { x: cx, y: cy, w: cw, h: ch } = box;
                 if(cx < minX) minX = cx; if(cy < minY) minY = cy;
                 if(cx+cw > maxX) maxX = cx+cw; if(cy+ch > maxY) maxY = cy+ch;
             });
@@ -561,16 +574,18 @@
             vpBox.style.width = (vpW * finalScale) + 'px'; vpBox.style.height = (vpH * finalScale) + 'px';
             vpBox.style.left = (offsetX + (vpX - minX) * finalScale) + 'px'; vpBox.style.top = (offsetY + (vpY - minY) * finalScale) + 'px';
 
-            mmCards.innerHTML = '';
-            rootCards.forEach(card => {
+            const fragment = document.createDocumentFragment();
+            const renderEvery = Math.max(1, Math.ceil(rootCardBoxes.length / MINIMAP_MAX_RENDERED_CARDS));
+            rootCardBoxes.forEach(({ card, box }, index) => {
+                if (renderEvery > 1 && index % renderEvery !== 0 && !card.classList.contains('selected')) return;
                 const mc = document.createElement('div'); mc.className = 'minimap-card';
                 if (card.classList.contains('selected')) mc.classList.add('selected');
-                const cx = parseFloat(card.style.left), cy = parseFloat(card.style.top);
-                const cw = parseFloat(card.style.width) || card.offsetWidth, ch = parseFloat(card.style.height) || card.offsetHeight;
+                const { x: cx, y: cy, w: cw, h: ch } = box;
                 mc.style.width = Math.max(cw * finalScale, 2) + 'px'; mc.style.height = Math.max(ch * finalScale, 2) + 'px';
                 mc.style.left = (offsetX + (cx - minX) * finalScale) + 'px'; mc.style.top = (offsetY + (cy - minY) * finalScale) + 'px';
-                mmCards.appendChild(mc);
+                fragment.appendChild(mc);
             });
+            mmCards.replaceChildren(fragment);
         }
 
         const minimap = document.getElementById('minimap');
@@ -592,6 +607,7 @@
 
         // ================= 全局拖拽与缩放状态 =================
         let isSelecting = false, hasDraggedBox = false;
+        let selectionScanRaf = null;
         let startX, startY;
         let isDraggingCard = false;
         let hasStartedDraggingMove = false; // 核心拖拽锁：区分是点击还是真正的拖动
@@ -611,16 +627,37 @@
         let lineStartData = null; // 记录起点 { cardId, anchor }
         let tempLineElement = null; // 拖拽时的临时虚线
         let selectedLineId = null;
+        let lineRenderRaf = null;
+
+        function queueRenderLines() {
+            if (lineRenderRaf) return;
+            lineRenderRaf = window.requestAnimationFrame(() => {
+                lineRenderRaf = null;
+                renderLines();
+            });
+        }
 
         // 计算连接点相对于底层 Canvas 的绝对坐标
         // 核心算法1：获取卡片四周的 4 个物理锚点
+        function getCardCanvasBox(card) {
+            let x = parseFloat(card.style.left);
+            let y = parseFloat(card.style.top);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) {
+                const rect = card.getBoundingClientRect();
+                const canvasRect = canvas.getBoundingClientRect();
+                x = (rect.left - canvasRect.left) / scale;
+                y = (rect.top - canvasRect.top) / scale;
+            }
+            return {
+                x,
+                y,
+                w: readCardMetric(card, 'width'),
+                h: readCardMetric(card, 'height')
+            };
+        }
+
         function getCardAnchors(card) {
-            const rect = card.getBoundingClientRect();
-            const canvasRect = canvas.getBoundingClientRect();
-            const x = (rect.left - canvasRect.left) / scale;
-            const y = (rect.top - canvasRect.top) / scale;
-            const w = rect.width / scale;
-            const h = rect.height / scale;
+            const { x, y, w, h } = getCardCanvasBox(card);
             return {
                 top: { x: x + w/2, y: y },
                 bottom: { x: x + w/2, y: y + h },
@@ -715,6 +752,8 @@
 
             const currentBoard = getActiveBoard();
             const usedColors = new Set();
+            const lineFragment = document.createDocumentFragment();
+            const labelFragment = document.createDocumentFragment();
 
             lines.forEach(line => {
                 const fromCard = document.getElementById(line.from);
@@ -756,7 +795,7 @@
 
                     g.appendChild(path);
                     g.appendChild(hitPath);
-                    linesCanvas.appendChild(g);
+                    lineFragment.appendChild(g);
 
                     // 标签处理
                     if (line.label || line.id === selectedLineId) {
@@ -774,12 +813,15 @@
                             line.label = e.target.innerText.trim();
                             renderLines(); scheduleSaveState();
                         });
-                        labelsContainer.appendChild(labelDiv);
+                        labelFragment.appendChild(labelDiv);
                     }
                 }
             });
 
             // 核心修复2：必须使用原生 createElementNS 严格创建 SVG 标签并追加，这样才能被现代浏览器完美识别
+            linesCanvas.appendChild(lineFragment);
+            labelsContainer.appendChild(labelFragment);
+
             usedColors.forEach(color => {
                 const colorId = color.replace('#', '');
                 if (!document.getElementById(`arrow-${colorId}`)) {
@@ -979,7 +1021,7 @@
         }
 
         function clearCardSelection() {
-            getCards().forEach(card => resetCardInteractiveState(card));
+            document.querySelectorAll('.card.selected, .card.is-editing').forEach(card => resetCardInteractiveState(card));
             window.getSelection().removeAllRanges();
             updateNoteToolbar(null);
             updateBoardToolbar(null); // <--- 新增这行，取消选中时自动隐藏画板工具栏
@@ -1518,22 +1560,24 @@
         }
 
         function updateAllBoardCounts() {
-            document.querySelectorAll('.board-card').forEach(b => {
-                const directCards = Array.from(document.querySelectorAll('.card:not(.nested-card)')).filter(c => c.dataset.boardId === b.id);
-                let boardCount = 0;
-                let cardCount = 0;
+            const boards = Array.from(document.querySelectorAll('.board-card'));
+            const countsByBoard = new Map();
+            boards.forEach(board => countsByBoard.set(board.id, { boardCount: 0, cardCount: 0 }));
 
-                directCards.forEach(card => {
-                    if (card.dataset.type === 'board') {
-                        boardCount += 1;
-                    } else if (card.classList.contains('column-card')) {
-                        cardCount += card.querySelectorAll('.card.nested-card').length;
-                        cardCount += 1; // 算上收纳列自身
-                    } else {
-                        cardCount += 1;
-                    }
-                });
+            document.querySelectorAll('.card:not(.nested-card)').forEach(card => {
+                const counts = countsByBoard.get(card.dataset.boardId);
+                if (!counts) return;
+                if (card.dataset.type === 'board') {
+                    counts.boardCount += 1;
+                } else if (card.classList.contains('column-card')) {
+                    counts.cardCount += 1 + card.querySelectorAll('.card.nested-card').length;
+                } else {
+                    counts.cardCount += 1;
+                }
+            });
 
+            boards.forEach(b => {
+                const { boardCount, cardCount } = countsByBoard.get(b.id) || { boardCount: 0, cardCount: 0 };
                 const countText = b.querySelector('.board-count');
                 if(countText) {
                     // 智能组合显示文本：只有 board 或只有 card 时精简显示
@@ -3780,6 +3824,185 @@
             }
         }
 
+        function readImageAsOriginalDataUrl(fileOrBlob, callback) {
+            if (!fileOrBlob) return;
+            const reader = new FileReader();
+            reader.onload = e => callback(e.target.result);
+            reader.onerror = () => {
+                if (typeof showToast === 'function') showToast('图片读取失败', 'error');
+            };
+            reader.readAsDataURL(fileOrBlob);
+        }
+
+        function isDataImageSource(src) {
+            return /^data:image\//i.test(String(src || ''));
+        }
+
+        function getElectronClipboardTools() {
+            try {
+                if (typeof require !== 'function') return null;
+                const electron = require('electron');
+                if (!electron?.clipboard || !electron?.nativeImage) return null;
+                return { clipboard: electron.clipboard, nativeImage: electron.nativeImage };
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function getElectronIpcRenderer() {
+            try {
+                if (typeof require !== 'function') return null;
+                return require('electron')?.ipcRenderer || null;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function getNodeBuffer() {
+            if (typeof Buffer !== 'undefined') return Buffer;
+            if (typeof require === 'function') return require('buffer').Buffer;
+            return null;
+        }
+
+        async function saveImageDataUrlAsAsset(dataUrl) {
+            if (!isDataImageSource(dataUrl)) return dataUrl;
+            const ipcRenderer = getElectronIpcRenderer();
+            if (!ipcRenderer) return dataUrl;
+            try {
+                const result = await ipcRenderer.invoke('save-image-asset', { dataUrl });
+                return result?.url || dataUrl;
+            } catch (_) {
+                if (typeof showToast === 'function') showToast('图片已保留，但保存为本地资产失败', 'warning');
+                return dataUrl;
+            }
+        }
+
+        function createImageCardFromBlob(x, y, blob, w = 300, h = 'auto', isNested = false) {
+            readImageAsOriginalDataUrl(blob, async (dataUrl) => {
+                const src = await saveImageDataUrlAsAsset(dataUrl);
+                const card = createImageCard(x, y, src, w, h, isNested);
+                if (card) {
+                    clearCardSelection();
+                    card.classList.add('selected');
+                    updateMinimap();
+                    scheduleSaveState();
+                }
+            });
+        }
+
+        function imageSourceToPngBlob(src) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                if (!/^data:/i.test(src)) img.crossOrigin = 'anonymous';
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.naturalWidth || img.width;
+                    canvas.height = img.naturalHeight || img.height;
+                    const ctx = canvas.getContext('2d');
+                    if (!ctx || !canvas.width || !canvas.height) {
+                        reject(new Error('Image decode failed'));
+                        return;
+                    }
+                    ctx.drawImage(img, 0, 0);
+                    canvas.toBlob(blob => {
+                        if (blob) resolve(blob);
+                        else reject(new Error('Image encode failed'));
+                    }, 'image/png');
+                };
+                img.onerror = () => reject(new Error('Image load failed'));
+                img.src = src;
+            });
+        }
+
+        async function copyImageSourceToSystemClipboard(src) {
+            if (!src) return false;
+
+            const electronTools = getElectronClipboardTools();
+            if (electronTools) {
+                try {
+                    let image = null;
+                    if (/^data:/i.test(src)) {
+                        image = electronTools.nativeImage.createFromDataURL(src);
+                    } else if (/^file:/i.test(src)) {
+                        try {
+                            const { fileURLToPath } = require('url');
+                            image = electronTools.nativeImage.createFromPath(fileURLToPath(src));
+                        } catch (_) {}
+                    }
+
+                    if (!image || image.isEmpty()) {
+                        const response = await fetch(src);
+                        const NodeBuffer = getNodeBuffer();
+                        if (!response.ok || !NodeBuffer) throw new Error('Image fetch failed');
+                        image = electronTools.nativeImage.createFromBuffer(NodeBuffer.from(await response.arrayBuffer()));
+                    }
+
+                    if (!image || image.isEmpty()) {
+                        const pngBlob = await imageSourceToPngBlob(src);
+                        const NodeBuffer = getNodeBuffer();
+                        if (!NodeBuffer) throw new Error('Buffer unavailable');
+                        image = electronTools.nativeImage.createFromBuffer(NodeBuffer.from(await pngBlob.arrayBuffer()));
+                    }
+
+                    if (image && !image.isEmpty()) {
+                        electronTools.clipboard.writeImage(image);
+                        return true;
+                    }
+                } catch (_) {}
+            }
+
+            if (navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+                const pngBlob = await imageSourceToPngBlob(src);
+                await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+                return true;
+            }
+
+            return false;
+        }
+
+        function copyCardsToClipboard(targets) {
+            const targetList = Array.from(targets || []).filter(Boolean);
+            if (targetList.length === 0) return;
+
+            cardClipboard = targetList.map(c => serializeCard(c, false));
+
+            if (targetList.length === 1 && targetList[0].dataset.type === 'image') {
+                const img = targetList[0].querySelector('img');
+                copyImageSourceToSystemClipboard(img?.src).then(copied => {
+                    if (typeof showToast !== 'function') return;
+                    showToast(copied
+                        ? '\u56fe\u7247\u5df2\u590d\u5236\uff0c\u53ef\u7c98\u8d34\u5230\u5176\u4ed6\u8f6f\u4ef6'
+                        : '\u5df2\u590d\u5236\u56fe\u7247\u5361\u7247\uff0c\u4f46\u7cfb\u7edf\u526a\u8d34\u677f\u4e0d\u53ef\u7528',
+                        copied ? 'success' : 'warning');
+                }).catch(() => {
+                    if (typeof showToast === 'function') {
+                        showToast('\u5df2\u590d\u5236\u56fe\u7247\u5361\u7247\uff0c\u4f46\u5199\u5165\u7cfb\u7edf\u526a\u8d34\u677f\u5931\u8d25', 'warning');
+                    }
+                });
+                return;
+            }
+
+            if (typeof showToast === 'function') {
+                showToast(`\u5df2\u590d\u5236 ${targetList.length} \u5f20\u5361\u7247`, 'success');
+            }
+        }
+
+        function externalizeImageCardSource(card) {
+            const img = card?.querySelector?.('img');
+            const rawSrc = img?.getAttribute('src') || '';
+            if (!isDataImageSource(rawSrc)) return;
+
+            saveImageDataUrlAsAsset(rawSrc).then(assetUrl => {
+                if (!assetUrl || assetUrl === rawSrc || !isDataImageSource(img.getAttribute('src') || '')) return;
+                img.setAttribute('src', assetUrl);
+                img.src = assetUrl;
+                setTimeout(() => {
+                    updateMinimap();
+                    scheduleSaveState(true);
+                }, 1200);
+            }).catch(() => {});
+        }
+
         function createImageCard(x, y, src, w = 300, h = 'auto', isNested = false) {
             const card = document.createElement('div');
             card.className = `card image-card ${isNested ? 'nested-card' : ''}`;
@@ -3788,9 +4011,10 @@
                 card.style.width = `${w}px`; card.style.height = `auto`;
             }
             card.dataset.type = "image"; card.dataset.boardId = getActiveBoard();
-            card.innerHTML = `<div class="card-header"><span>Image</span><i class="fa-solid fa-ellipsis-vertical"></i></div><img src="${src}" alt="pasted image">`;
+            card.innerHTML = `<div class="card-header"><span>Image</span><i class="fa-solid fa-ellipsis-vertical"></i></div><img src="${escapeAttribute(src)}" alt="pasted image" loading="lazy" decoding="async" draggable="false">`;
             const attached = attachAndReturn(card, null);
             attached.querySelector('img').onload = () => updateMinimap();
+            externalizeImageCardSource(attached);
             return attached;
         }
 
@@ -3930,7 +4154,8 @@
                     view: { panX, panY, scale, minimapUserZoom },
                     cards: getRootCardsForPersistence().map(card => serializeCard(card, false)),
                     lines: lines,
-                    drawData: document.getElementById('drawLayer') ? document.getElementById('drawLayer').innerHTML : ''
+                    drawData: document.getElementById('drawLayer') ? document.getElementById('drawLayer').innerHTML : '',
+                    templates: window.savedTemplates || []
                 };
                 const newStateStr = JSON.stringify(state);
 
@@ -4012,6 +4237,12 @@
         }, 50);
 
                 if (!isUndoRedoing) currentStateStr = raw;
+
+                // 从备份/同步恢复模板数据
+                if (Array.isArray(state.templates) && state.templates.length > 0) {
+                    window.savedTemplates = state.templates;
+                    try { localStorage.setItem('gemeni-templates', JSON.stringify(state.templates)); } catch (_) {}
+                }
 
                 return true;
             } catch (error) {
@@ -4205,12 +4436,60 @@
             return defaults[type]?.[property] || 0;
         }
 
+        function normalizeExternalUrl(rawUrl) {
+            const trimmed = String(rawUrl || '').trim();
+            if (/^https?:\/\//i.test(trimmed)) return trimmed;
+            if (/^[^\s/]+\.[a-z]{2,}(?:\/[^\s]*)?$/i.test(trimmed)) return `https://${trimmed}`;
+            return trimmed;
+        }
+
+        function isProbablyImageUrl(rawUrl) {
+            try {
+                const url = new URL(normalizeExternalUrl(rawUrl));
+                const path = url.pathname.toLowerCase();
+                if (/\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(path)) return true;
+                const format = (url.searchParams.get('format') || url.searchParams.get('fm') || url.searchParams.get('type') || '').toLowerCase();
+                if (/^(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(format)) return true;
+                if (/(^|\.)i\.imgur\.com$|images\.unsplash\.com$|res\.cloudinary\.com$|cdn\.pixabay\.com$|images\.pexels\.com$|googleusercontent\.com$|raw\.githubusercontent\.com$|sinaimg\.cn$|sinaimg\.com$|qpic\.cn$|alicdn\.com$|sm\.ms$/i.test(url.hostname)) return true;
+                return /(image|img|pic|photo|cdn|static|media|file|raw)/i.test(url.hostname)
+                    && /\.(png|jpe?g|gif|webp|avif|bmp|svg)/i.test(url.href);
+            } catch (_) {
+                return false;
+            }
+        }
+
+        function getImageUrlFromMarkdown(text) {
+            const match = String(text || '').match(/!\[[^\]]*]\((https?:\/\/[^)\s]+)\)/i);
+            return match ? match[1] : '';
+        }
+
+        function createImageUrlCard(x, y, url) {
+            const card = createImageCard(x - 150, y - 120, normalizeExternalUrl(url));
+            if (card) {
+                clearCardSelection();
+                card.classList.add('selected');
+                updateMinimap();
+                scheduleSaveState();
+            }
+            return card;
+        }
+
         // 智能粘贴：URL → Link卡片，普通文字 → Note卡片
         function pasteExternalText(text, cx, cy) {
+            const markdownImageUrl = getImageUrlFromMarkdown(text);
+            if (markdownImageUrl && isProbablyImageUrl(markdownImageUrl)) {
+                createImageUrlCard(cx, cy, markdownImageUrl);
+                return;
+            }
+
             // 检测纯URL（或带简短描述的URL）
             const urlMatch = text.match(/^(?:https?:\/\/[^\s]+|[^\s]+\.[a-z]{2,}\/[^\s]*)$/i);
             if (urlMatch) {
-                const url = urlMatch[0];
+                const url = normalizeExternalUrl(urlMatch[0]);
+                if (isProbablyImageUrl(url)) {
+                    createImageUrlCard(cx, cy, url);
+                    return;
+                }
                 const card = createLinkCard(cx - 190, cy - 30, url);
                 if (card) { clearCardSelection(); card.classList.add('selected'); updateMinimap(); scheduleSaveState(); }
                 return;
@@ -4230,11 +4509,9 @@
                 if (items[i].type.indexOf('image') !== -1) {
                     hasImage = true;
                     const blob = items[i].getAsFile();
-                    compressImage(blob, (compressedDataUrl) => {
-                        const rect = viewport.getBoundingClientRect();
-                        const cx = (rect.width / 2 - panX) / scale, cy = (rect.height / 2 - panY) / scale;
-                        createImageCard(cx - 150, cy - 150, compressedDataUrl);
-                    });
+                    const rect = viewport.getBoundingClientRect();
+                    const cx = (rect.width / 2 - panX) / scale, cy = (rect.height / 2 - panY) / scale;
+                    createImageCardFromBlob(cx - 150, cy - 150, blob);
                 }
             }
             // 无图片但有文字 → 智能创建卡片
@@ -4500,7 +4777,7 @@
                 Array.from(e.target.files).forEach((file, index) => {
                     const offsetX = index * 30; const offsetY = index * 30;
                     if (file.type.startsWith('image/')) {
-                        compressImage(file, (dataUrl) => createImageCard(cx + offsetX, cy + offsetY, dataUrl));
+                        createImageCardFromBlob(cx + offsetX, cy + offsetY, file);
                     } else if (file.name.toLowerCase().endsWith('.md') || file.type === 'text/markdown') {
                         // 🌟 MD 文件直开：智能计算宽度，防止卡片过度细长
                         const reader = new FileReader();
@@ -4590,8 +4867,8 @@
                         currentCard.dataset.manualHeight = 'true';
                     }
                 }
-                updateMinimap();
-                renderLines(); // 缩放卡片时实时刷新连线
+                queueMinimapRebuild(120);
+                queueRenderLines(); // 缩放卡片时实时刷新连线
                 return;
             }
 
@@ -4712,21 +4989,26 @@
                         if (placeholder) placeholder.remove();
                     }
 
-                    updateMinimap();
-                    renderLines(); // 拖拽卡片时实时刷新连线
+                    queueMinimapRebuild(120);
+                    queueRenderLines(); // 拖拽卡片时实时刷新连线
                 }
             }
             if (isSelecting) {
                 hasDraggedBox = true; const cPos = getCanvasCoords(e);
                 selectionBox.style.width = Math.abs(cPos.x - startX) + 'px'; selectionBox.style.height = Math.abs(cPos.y - startY) + 'px';
                 selectionBox.style.left = Math.min(cPos.x, startX) + 'px'; selectionBox.style.top = Math.min(cPos.y, startY) + 'px';
-                const boxRect = selectionBox.getBoundingClientRect();
-                getCards().forEach(card => {
-                    if (card.classList.contains('nested-card') || card.dataset.boardId !== getActiveBoard()) return;
-                    const cardRect = card.getBoundingClientRect();
-                    const isIntersecting = !(boxRect.right < cardRect.left || boxRect.left > cardRect.right || boxRect.bottom < cardRect.top || boxRect.top > cardRect.bottom);
-                    if (isIntersecting) card.classList.add('selected'); else card.classList.remove('selected');
-                });
+                if (!selectionScanRaf) {
+                    selectionScanRaf = window.requestAnimationFrame(() => {
+                        selectionScanRaf = null;
+                        const boxRect = selectionBox.getBoundingClientRect();
+                        getCards().forEach(card => {
+                            if (card.classList.contains('nested-card') || card.dataset.boardId !== getActiveBoard()) return;
+                            const cardRect = card.getBoundingClientRect();
+                            const isIntersecting = !(boxRect.right < cardRect.left || boxRect.left > cardRect.right || boxRect.bottom < cardRect.top || boxRect.top > cardRect.bottom);
+                            if (isIntersecting) card.classList.add('selected'); else card.classList.remove('selected');
+                        });
+                    });
+                }
             }
         });
 
@@ -4854,7 +5136,10 @@
             if (!html || !html.trim()) return '';
             try {
                 const doc = new DOMParser().parseFromString(html, 'text/html');
-                const candidate = doc.querySelector('a[href], iframe[src], webview[src], video[src], source[src], img[src]');
+                const imageCandidate = doc.querySelector('img[src], source[srcset], source[src]');
+                const imageRaw = imageCandidate?.getAttribute('src') || imageCandidate?.getAttribute('srcset')?.split(/\s+/)[0] || '';
+                if (/^https?:\/\//i.test(imageRaw)) return imageRaw;
+                const candidate = doc.querySelector('a[href], iframe[src], webview[src], video[src], source[src]');
                 const raw = candidate?.getAttribute('href') || candidate?.getAttribute('src') || '';
                 if (/^https?:\/\//i.test(raw)) return raw;
             } catch {}
@@ -4885,7 +5170,7 @@
                 Array.from(e.dataTransfer.files).forEach((file, index) => {
                     const offsetX = index * 30; const offsetY = index * 30;
                     if (file.type.startsWith('image/')) {
-                        compressImage(file, (dataUrl) => createImageCard(cPos.x + offsetX, cPos.y + offsetY, dataUrl));
+                        createImageCardFromBlob(cPos.x + offsetX, cPos.y + offsetY, file);
                     } else if (isHtmlDropFile(file)) {
                         const reader = new FileReader();
                         reader.onload = (ev) => {
@@ -4927,8 +5212,11 @@
                 const externalHtml = e.dataTransfer.getData('text/html');
                 const htmlUrl = getFirstUrlFromHtml(externalHtml);
                 if (htmlUrl) {
-                    const card = createLinkCard(cPos.x, cPos.y, htmlUrl);
-                    if (card) { clearCardSelection(); card.classList.add('selected'); updateMinimap(); scheduleSaveState(); }
+                    if (isProbablyImageUrl(htmlUrl)) createImageUrlCard(cPos.x, cPos.y, htmlUrl);
+                    else {
+                        const card = createLinkCard(cPos.x, cPos.y, normalizeExternalUrl(htmlUrl));
+                        if (card) { clearCardSelection(); card.classList.add('selected'); updateMinimap(); scheduleSaveState(); }
+                    }
                     return;
                 }
                 if (externalHtml && externalHtml.trim()) {
@@ -5703,17 +5991,7 @@
                 e.preventDefault();
                 const targets = document.querySelectorAll('.card.selected');
                 if (targets.length > 0) {
-                    cardClipboard = Array.from(targets).map(c => serializeCard(c, false));
-                    // 单张图片卡片：把图片数据写入系统剪贴板，可粘贴到外部应用
-                    if (targets.length === 1 && targets[0].dataset.type === 'image') {
-                        const img = targets[0].querySelector('img');
-                        if (img && img.src) {
-                            fetch(img.src).then(r => r.blob()).then(blob => {
-                                try { navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]); } catch(_) {}
-                            }).catch(() => {});
-                        }
-                    }
-                    if (typeof showToast === 'function') showToast(`已复制 ${targets.length} 张卡片`, 'success');
+                    copyCardsToClipboard(targets);
                 }
                 return;
             }
@@ -5763,10 +6041,7 @@
                                 for (const type of item.types) {
                                     if (type.startsWith('image/')) {
                                         item.getType(type).then(blob => {
-                                            compressImage(blob, (dataUrl) => {
-                                                const card = createImageCard(cx - 150, cy - 150, dataUrl);
-                                                if (card) { clearCardSelection(); card.classList.add('selected'); updateMinimap(); scheduleSaveState(); }
-                                            });
+                                            createImageCardFromBlob(cx - 150, cy - 150, blob);
                                         });
                                         return;
                                     }
@@ -6191,8 +6466,10 @@
                         // 拦截悬浮工具栏的 mousedown，仅用于防止焦点丢失，所有命令移交到 click 处理
         floatingToolbar.addEventListener('mousedown', (e) => {
             if (e.target.id === 'inlineColorPicker') return;
+            // 允许文字颜色预设下拉面板内的点击（色块、默认按钮、自定义取色器）
+            if (e.target.closest('.text-color-dropdown')) return;
             e.preventDefault(); // 核心：拦截默认行为，保持文本选区不丢失
-            e.stopPropagation(); 
+            e.stopPropagation();
         });
 
         // 🌟 核心重构：将所有指令逻辑绑定在 click，防止与 selectionchange 冲突导致弹窗瞬间闪退！
@@ -6200,6 +6477,50 @@
             if (e.target.id === 'inlineColorPicker') return;
             e.preventDefault();
             e.stopPropagation();
+
+            // 🎨 处理文字颜色预设色块点击 — 应用颜色并关闭下拉
+            const swatch = e.target.closest('.text-color-swatch');
+            if (swatch) {
+                const color = swatch.dataset.color;
+                document.execCommand('foreColor', false, color);
+                document.querySelectorAll('.text-color-dropdown').forEach(d => d.classList.remove('open'));
+                updateNoteCardFromEditor();
+                return;
+            }
+
+            // 🎨 处理"默认颜色"按钮点击 — 移除内联颜色标签恢复 CSS 继承
+            const defaultBtn = e.target.closest('#textColorDefault');
+            if (defaultBtn) {
+                const sel = window.getSelection();
+                if (sel.rangeCount && !sel.isCollapsed) {
+                    const range = sel.getRangeAt(0);
+                    let node = range.commonAncestorContainer;
+                    if (node.nodeType === 3) node = node.parentNode;
+                    const fontNode = node?.closest?.('font[color]');
+                    if (fontNode) {
+                        // 展开内部的 <font color> 标签，让文字继承卡片 CSS 颜色
+                        const parent = fontNode.parentNode;
+                        while (fontNode.firstChild) {
+                            parent.insertBefore(fontNode.firstChild, fontNode);
+                        }
+                        parent.removeChild(fontNode);
+                        // 标准化合并相邻文本节点
+                        parent.normalize();
+                    }
+                }
+                document.querySelectorAll('.text-color-dropdown').forEach(d => d.classList.remove('open'));
+                updateNoteCardFromEditor();
+                return;
+            }
+
+            // 🎨 点击调色板图标 — 切换下拉面板的开关
+            if (e.target.closest('.text-color-btn')) {
+                document.querySelectorAll('.text-color-dropdown').forEach(d => d.classList.toggle('open'));
+                return;
+            }
+
+            // 点击浮动工具栏其它按钮时关闭颜色下拉
+            document.querySelectorAll('.text-color-dropdown').forEach(d => d.classList.remove('open'));
 
             const btn = e.target.closest('.floating-toolbar-btn');
             if (!btn) return;
@@ -6337,18 +6658,33 @@
                         const range = sel.getRangeAt(0);
                         const container = range.commonAncestorContainer;
                         const el = container.nodeType === 3 ? container.parentNode : container;
-                        const computedSize = parseFloat(window.getComputedStyle(el).fontSize);
+                        const parentSpan = el.closest('span[style*="font-size"]');
+                        const computedSize = parentSpan
+                            ? parseFloat(parentSpan.style.fontSize)
+                            : parseFloat(window.getComputedStyle(el).fontSize);
                         const delta = cmd === 'sizeUp' ? 2 : -2;
                         const newSize = Math.max(8, computedSize + delta);
-                        const span = document.createElement('span');
-                        span.style.fontSize = newSize + 'px';
-                        try {
-                            range.surroundContents(span);
-                        } catch (_) {
-                            const fragment = range.extractContents();
-                            span.appendChild(fragment);
-                            range.insertNode(span);
+                        let span = parentSpan;
+                        if (parentSpan && el === parentSpan) {
+                            // Already wrapped in a size span — just update its font-size
+                            parentSpan.style.fontSize = newSize + 'px';
+                        } else {
+                            span = document.createElement('span');
+                            span.style.fontSize = newSize + 'px';
+                            try {
+                                range.surroundContents(span);
+                            } catch (_) {
+                                const fragment = range.extractContents();
+                                span.appendChild(fragment);
+                                range.insertNode(span);
+                            }
                         }
+                        // 保留选区让用户能连续点击放大/缩小
+                        sel.removeAllRanges();
+                        const keepRange = document.createRange();
+                        keepRange.selectNodeContents(span);
+                        sel.addRange(keepRange);
+
                         noteCard.dataset.markdown = deriveMarkdownFromHtml(editor.innerHTML);
                         autoGrowNoteCard(noteCard);
                         scheduleSaveState();
@@ -6369,13 +6705,18 @@
         if (inlineColorPicker) {
             inlineColorPicker.addEventListener('input', (e) => {
                 document.execCommand('foreColor', false, e.target.value);
-                const noteEditor = document.querySelector('.note-card.is-editing .md-editor');
-                if (noteEditor) {
-                    const card = noteEditor.closest('.note-card');
-                    card.dataset.markdown = deriveMarkdownFromHtml(noteEditor.innerHTML);
-                    scheduleSaveState();
-                }
+                updateNoteCardFromEditor();
             });
+        }
+
+        // 🎨 辅助函数：刷新当前编辑中 note 卡片的 markdown 并保存
+        function updateNoteCardFromEditor() {
+            const noteEditor = document.querySelector('.note-card.is-editing .md-editor');
+            if (noteEditor) {
+                const card = noteEditor.closest('.note-card');
+                card.dataset.markdown = deriveMarkdownFromHtml(noteEditor.innerHTML);
+                scheduleSaveState();
+            }
         }
 
         const contextMenu = document.getElementById('contextMenu');
@@ -6389,6 +6730,11 @@
             const settingsPopover = document.getElementById('settingsPopover');
             if (settingsPopover) settingsPopover.classList.remove('show');
             if (contextMenu) contextMenu.classList.remove('show');
+
+            // 点击外部关闭文字颜色下拉面板
+            if (!e.target.closest('.text-color-btn') && !e.target.closest('.text-color-dropdown')) {
+                document.querySelectorAll('.text-color-dropdown').forEach(d => d.classList.remove('open'));
+            }
 
             // 点击空白处时隐藏悬浮连线工具栏
             const flt = document.getElementById('floatingLineToolbar');
@@ -6826,17 +7172,7 @@
                     ? Array.from(document.querySelectorAll('.card.selected'))
                     : (rightClickedCard ? [rightClickedCard] : []);
                 if (targets.length > 0) {
-                    cardClipboard = targets.map(c => serializeCard(c, false));
-                    // 单张图片卡片：把图片数据写入系统剪贴板
-                    if (targets.length === 1 && targets[0].dataset.type === 'image') {
-                        const img = targets[0].querySelector('img');
-                        if (img && img.src) {
-                            fetch(img.src).then(r => r.blob()).then(blob => {
-                                try { navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]); } catch(_) {}
-                            }).catch(() => {});
-                        }
-                    }
-                    if (typeof showToast === 'function') showToast(`已复制 ${targets.length} 张卡片`, 'success');
+                    copyCardsToClipboard(targets);
                 }
             } else if (action === 'paste') {
                 // 🌟 核心新增：精准贴合在鼠标呼出右键菜单的坐标位置
