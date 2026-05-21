@@ -3964,7 +3964,9 @@
             const targetList = Array.from(targets || []).filter(Boolean);
             if (targetList.length === 0) return;
 
-            cardClipboard = targetList.map(c => serializeCard(c, false));
+            const bundle = buildCardBundleFromTargets(targetList);
+            cardClipboard = bundle.cards;
+            cardClipboard.lines = bundle.lines;
 
             if (targetList.length === 1 && targetList[0].dataset.type === 'image') {
                 const img = targetList[0].querySelector('img');
@@ -4412,6 +4414,176 @@
             state.borderColor = card.style.borderTopColor || null;
 
             return state;
+        }
+
+        let cloneIdCounter = 0;
+
+        function clonePlainState(value) {
+            return JSON.parse(JSON.stringify(value));
+        }
+
+        function createCloneId(type = 'card') {
+            const prefix = type === 'board' ? 'board' : (type === 'line' ? 'line' : 'card');
+            return `${prefix}-${Date.now()}-${cloneIdCounter++}-${Math.floor(Math.random() * 100000)}`;
+        }
+
+        function readStateCoordinate(state, key) {
+            const value = Number(state?.[key]);
+            return Number.isFinite(value) ? value : 0;
+        }
+
+        function getBoardSubtreeCards(boardId, allCards = getRootCardsForPersistence(), seenBoards = new Set(), result = []) {
+            if (!boardId || seenBoards.has(boardId)) return result;
+            seenBoards.add(boardId);
+
+            allCards.forEach(card => {
+                if (!card || card.dataset.boardId !== boardId) return;
+                result.push(card);
+                if (card.dataset.type === 'board' && card.id) {
+                    getBoardSubtreeCards(card.id, allCards, seenBoards, result);
+                }
+            });
+
+            return result;
+        }
+
+        function serializeCardForClone(card) {
+            const state = serializeCard(card, false);
+            if (!card || card.dataset.type !== 'board' || !card.id) return state;
+
+            const subtreeCards = getBoardSubtreeCards(card.id);
+            const subtreeIds = new Set(subtreeCards.map(c => c.id).filter(Boolean));
+            const subtreeLines = lines
+                .filter(line => subtreeIds.has(line.from) && subtreeIds.has(line.to))
+                .map(line => ({ ...line }));
+
+            if (subtreeCards.length > 0 || subtreeLines.length > 0) {
+                state.boardSubtree = {
+                    cards: subtreeCards.map(subtreeCard => serializeCard(subtreeCard, false)),
+                    lines: subtreeLines
+                };
+            }
+
+            return state;
+        }
+
+        function buildCardBundleFromTargets(targets) {
+            const targetList = Array.from(targets || []).filter(Boolean);
+            const targetIds = new Set(targetList.map(card => card.id).filter(Boolean));
+            return {
+                cards: targetList.map(card => serializeCardForClone(card)),
+                lines: lines.filter(line => targetIds.has(line.from) && targetIds.has(line.to)).map(line => ({ ...line }))
+            };
+        }
+
+        function registerCloneIdsDeep(state, idMap) {
+            if (!state) return;
+            if (state.id && !idMap.has(state.id)) {
+                idMap.set(state.id, createCloneId(state.type));
+            }
+            if (Array.isArray(state.children)) {
+                state.children.forEach(childState => registerCloneIdsDeep(childState, idMap));
+            }
+        }
+
+        function prepareCloneIdMapForState(state, idMap) {
+            registerCloneIdsDeep(state, idMap);
+            if (Array.isArray(state?.boardSubtree?.cards)) {
+                state.boardSubtree.cards.forEach(childState => registerCloneIdsDeep(childState, idMap));
+            }
+        }
+
+        function remapStateReferences(state, idMap) {
+            if (!state) return;
+            if (state.id && idMap.has(state.id)) state.id = idMap.get(state.id);
+            if (state.boardId && idMap.has(state.boardId)) state.boardId = idMap.get(state.boardId);
+            if (state.parentCardId && idMap.has(state.parentCardId)) state.parentCardId = idMap.get(state.parentCardId);
+            if (Array.isArray(state.children)) {
+                state.children.forEach(childState => remapStateReferences(childState, idMap));
+            }
+        }
+
+        function restoreLineClone(line, idMap) {
+            if (!line || !idMap.has(line.from) || !idMap.has(line.to)) return;
+            const newLine = clonePlainState(line);
+            newLine.id = createCloneId('line');
+            newLine.from = idMap.get(line.from);
+            newLine.to = idMap.get(line.to);
+            if (newLine.from && newLine.to && document.getElementById(newLine.from) && document.getElementById(newLine.to)) {
+                lines.push(newLine);
+            }
+        }
+
+        function syncRestoredCardVisibility(card) {
+            if (!card || card.classList.contains('nested-card')) return;
+            const display = card.dataset.boardId === getActiveBoard() ? 'flex' : 'none';
+            card.style.setProperty('display', display, 'important');
+        }
+
+        function restorePackedCardStateAt(state, x, y, targetBoardId, idMap) {
+            const stateClone = clonePlainState(state);
+            const boardSubtree = stateClone.boardSubtree;
+            delete stateClone.boardSubtree;
+
+            remapStateReferences(stateClone, idMap);
+            stateClone.boardId = targetBoardId || getActiveBoard();
+            stateClone.x = x;
+            stateClone.y = y;
+
+            const rootCard = restoreCardFromState(stateClone, null);
+            syncRestoredCardVisibility(rootCard);
+
+            if (boardSubtree && Array.isArray(boardSubtree.cards)) {
+                boardSubtree.cards.forEach(childState => {
+                    const childClone = clonePlainState(childState);
+                    delete childClone.boardSubtree;
+                    remapStateReferences(childClone, idMap);
+                    syncRestoredCardVisibility(restoreCardFromState(childClone, null));
+                });
+            }
+
+            if (boardSubtree && Array.isArray(boardSubtree.lines)) {
+                boardSubtree.lines.forEach(line => restoreLineClone(line, idMap));
+            }
+
+            return rootCard;
+        }
+
+        function getCardStatesBounds(states) {
+            let minX = Infinity;
+            let minY = Infinity;
+            states.forEach(state => {
+                const x = readStateCoordinate(state, 'x');
+                const y = readStateCoordinate(state, 'y');
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+            });
+            if (minX === Infinity) minX = 0;
+            if (minY === Infinity) minY = 0;
+            return { minX, minY };
+        }
+
+        function restoreCardBundleAt(bundle, x, y, targetBoardId = getActiveBoard()) {
+            const states = Array.isArray(bundle) ? bundle : (Array.isArray(bundle?.cards) ? bundle.cards : []);
+            const bundleLines = Array.isArray(bundle?.lines) ? bundle.lines : [];
+            const bounds = getCardStatesBounds(states);
+            const idMap = new Map();
+            const restoredCards = [];
+
+            states.forEach(state => prepareCloneIdMapForState(state, idMap));
+
+            states.forEach(state => {
+                const cardX = x + (readStateCoordinate(state, 'x') - bounds.minX);
+                const cardY = y + (readStateCoordinate(state, 'y') - bounds.minY);
+                const card = restorePackedCardStateAt(state, cardX, cardY, targetBoardId, idMap);
+                if (card) {
+                    card.classList.add('selected');
+                    restoredCards.push(card);
+                }
+            });
+
+            bundleLines.forEach(line => restoreLineClone(line, idMap));
+            return restoredCards;
         }
 
         function cloneNodeWithFormState(node) {
@@ -5274,49 +5446,12 @@
                 }
                 if (!bundle) return;
 
-                // 计算包裹边框以准确定位落点
-                let minX = Infinity, minY = Infinity;
-                bundle.cards.forEach(c => {
-                    if (c.x < minX) minX = c.x;
-                    if (c.y < minY) minY = c.y;
-                });
-                if (minX === Infinity) { minX = 0; minY = 0; }
-
-                const offsetX = cPos.x - minX;
-                const offsetY = cPos.y - minY;
-
-                const idMap = {};
                 clearCardSelection();
 
-                                // 1. 恢复卡片并映射新ID
-                bundle.cards.forEach(cState => {
-                    const stateClone = JSON.parse(JSON.stringify(cState));
-                    const oldId = stateClone.id;
-                    const newId = 'card-' + Date.now() + Math.floor(Math.random() * 100000);
-                    if (oldId) idMap[oldId] = newId;
-
-                    stateClone.id = newId;
-                    stateClone.boardId = getActiveBoard(); // 🌟 核心修复：覆盖原有 boardId，确保拖拽出在当前画板可见
-                    stateClone.x += offsetX;
-                    stateClone.y += offsetY;
-
-                    const card = restoreCardFromState(stateClone, null);
-                    if (card) {
-                        card.classList.add('selected');
-                        if (isNested && source !== 'board' && source !== 'column') {
-                            newCard = card; // 让外层的列嵌套逻辑接管（如果正好拖进了收纳列中）
-                        }
-                    }
-                });
-
-                // 2. 恢复它们内部的关系（连线）
-                bundle.lines.forEach(l => {
-                    const newLine = JSON.parse(JSON.stringify(l));
-                    newLine.id = 'line-' + Date.now() + Math.floor(Math.random() * 100000);
-                    newLine.from = idMap[l.from] || l.from;
-                    newLine.to = idMap[l.to] || l.to;
-                    lines.push(newLine);
-                });
+                const restoredCards = restoreCardBundleAt(bundle, cPos.x, cPos.y, getActiveBoard());
+                if (restoredCards.length === 1 && restoredCards[0].dataset.type !== 'board' && restoredCards[0].dataset.type !== 'column') {
+                    newCard = restoredCards[0];
+                }
 
                                 // 核心差异：如果是从回收站拖出来的，说明是恢复操作，移除垃圾箱里的记录
                 if (source === 'trash-group' && thumbElement) {
@@ -5870,17 +6005,10 @@
             const trashGrid = document.getElementById('myTrashGrid');
 
             // 【核心重构】：垃圾桶也采用“组合包”逻辑，支持多选并保留连线
-            const groupData = { cards: [], lines: [] };
-            const targetIds = new Set(targets.map(c => c.id));
+            const groupData = buildCardBundleFromTargets(targets);
+            const internalLines = groupData.lines;
             let previewText = "";
             let thumbType = "group";
-
-            targets.forEach(card => {
-                groupData.cards.push(serializeCard(card, false));
-            });
-
-            const internalLines = lines.filter(l => targetIds.has(l.from) && targetIds.has(l.to));
-            groupData.lines = internalLines.map(l => ({...l}));
 
             if (targets.length === 1) {
                 const card = targets[0];
@@ -5902,11 +6030,13 @@
                         // 执行真实删除操作
             targets.forEach(card => {
                 const originalId = card.id;
-                if (originalId) lines = lines.filter(l => l.from !== originalId && l.to !== originalId);
+                const subtreeCards = card.dataset.type === 'board' ? getBoardSubtreeCards(originalId) : [];
+                const removeIds = new Set([originalId, ...subtreeCards.map(child => child.id).filter(Boolean)]);
+                if (removeIds.size > 0) lines = lines.filter(l => !removeIds.has(l.from) && !removeIds.has(l.to));
 
                 // 如果是 board 还要清理它包含的子卡片
                 if (card.dataset.type === 'board') {
-                    document.querySelectorAll(`.card:not(.nested-card)[data-board-id="${originalId}"]`).forEach(c => c.remove());
+                    subtreeCards.forEach(child => child.remove());
                 }
 
                 // 🌟 核心修复1：如果删除的是弹窗评论卡片，清空父级卡片上的数字徽章，或解除行内文字的评论高亮
@@ -5999,7 +6129,9 @@
                 e.preventDefault();
                 const targets = document.querySelectorAll('.card.selected');
                 if (targets.length > 0) {
-                    cardClipboard = Array.from(targets).map(c => serializeCard(c, false));
+                    const bundle = buildCardBundleFromTargets(targets);
+                    cardClipboard = bundle.cards;
+                    cardClipboard.lines = bundle.lines;
                     deleteSelectedCards();
                     if (typeof showToast === 'function') showToast(`已剪切 ${targets.length} 张卡片`, 'success');
                 }
@@ -6013,21 +6145,7 @@
                     const pasteX = (rect.width / 2 - panX) / scale;
                     const pasteY = (rect.height / 2 - panY) / scale;
 
-                    let minX = Infinity, minY = Infinity;
-                    cardClipboard.forEach(c => {
-                        if (c.x < minX) minX = c.x;
-                        if (c.y < minY) minY = c.y;
-                    });
-
-                    cardClipboard.forEach(state => {
-                        const newState = JSON.parse(JSON.stringify(state));
-                        newState.id = 'card-' + Date.now() + Math.floor(Math.random() * 100000);
-                        newState.boardId = getActiveBoard();
-                        newState.x = pasteX + (state.x - minX);
-                        newState.y = pasteY + (state.y - minY);
-                        const newCard = restoreCardFromState(newState, null);
-                        if (newCard) newCard.classList.add('selected');
-                    });
+                    restoreCardBundleAt(cardClipboard, pasteX, pasteY, getActiveBoard());
                     updateMinimap(); scheduleSaveState();
                     if (typeof showToast === 'function') showToast(`已粘贴 ${cardClipboard.length} 张卡片`, 'success');
                 } else {
@@ -6075,20 +6193,10 @@
                 e.preventDefault();
                 const targets = document.querySelectorAll('.card.selected');
                 if (targets.length > 0) {
-                    const clonedCards = [];
-                    targets.forEach(c => {
-                        const state = serializeCard(c, false);
-                        state.id = 'card-' + Date.now() + Math.floor(Math.random() * 100000);
-                        state.boardId = getActiveBoard();
-                        state.x += 40;
-                        state.y += 40;
-                        clonedCards.push(state);
-                    });
+                    const bundle = buildCardBundleFromTargets(targets);
+                    const bounds = getCardStatesBounds(bundle.cards);
                     clearCardSelection();
-                    clonedCards.forEach(state => {
-                        const newCard = restoreCardFromState(state, null);
-                        if (newCard) newCard.classList.add('selected');
-                    });
+                    restoreCardBundleAt(bundle, bounds.minX + 40, bounds.minY + 40, getActiveBoard());
                     updateMinimap(); scheduleSaveState();
                     if (typeof showToast === 'function') showToast(`已克隆 ${targets.length} 张卡片`, 'success');
                 }
@@ -6138,19 +6246,10 @@
             if (!transferGrid) return;
 
             // 【新版中转站逻辑】：将选中的多张卡片及内部连线打包成一个“剪贴板组”，并保留原卡片不删除
-            const groupData = { cards: [], lines: [] };
-            const targetIds = new Set(targets.map(c => c.id));
+            const groupData = buildCardBundleFromTargets(targets);
+            const internalLines = groupData.lines;
             let previewText = "";
             let thumbType = "group";
-
-            // 序列化所有卡片
-            targets.forEach(card => {
-                groupData.cards.push(serializeCard(card, false));
-            });
-
-            // 提取仅在这些选中卡片之间的内部连线
-            const internalLines = lines.filter(l => targetIds.has(l.from) && targetIds.has(l.to));
-            groupData.lines = internalLines.map(l => ({...l}));
 
             if (targets.length === 1) {
                 const card = targets[0];
@@ -6196,7 +6295,10 @@
             // 核心逻辑修改：将源卡片彻底“剪切”（删除），同时清理相连的所有全局连线
             targets.forEach(card => {
                 const originalId = card.id;
-                if (originalId) lines = lines.filter(l => l.from !== originalId && l.to !== originalId);
+                const subtreeCards = card.dataset.type === 'board' ? getBoardSubtreeCards(originalId) : [];
+                const removeIds = new Set([originalId, ...subtreeCards.map(child => child.id).filter(Boolean)]);
+                if (removeIds.size > 0) lines = lines.filter(l => !removeIds.has(l.from) && !removeIds.has(l.to));
+                subtreeCards.forEach(child => child.remove());
                 card.remove();
             });
 
@@ -6309,42 +6411,8 @@
         }
 
         function instantiateTemplate(bundle, cx, cy) {
-            let minX = Infinity, minY = Infinity;
-            bundle.cards.forEach(c => { if (c.x < minX) minX = c.x; if (c.y < minY) minY = c.y; });
-            if (minX === Infinity) { minX = 0; minY = 0; }
-            const offsetX = cx - minX;
-            const offsetY = cy - minY;
-            const idMap = {};
             clearCardSelection();
-            
-                                    // 批量恢复卡片并映射新的物理 ID
-            bundle.cards.forEach(cState => {
-                const stateClone = JSON.parse(JSON.stringify(cState));
-                const oldId = stateClone.id; // 此时 cState 已经带有 ID 了
-                const newId = 'card-' + Date.now() + Math.floor(Math.random() * 100001);
-                
-                // 🌟 建立映射关系：让连线知道“原来的 A 卡片”现在变成了“新生成的 B 卡片”
-                if (oldId) idMap[oldId] = newId; 
-                
-                stateClone.id = newId;
-                stateClone.boardId = getActiveBoard(); // 🌟 核心修复：强制将模板卡片的归属画板修改为当前所在的画板
-                stateClone.x += offsetX;
-                stateClone.y += offsetY;
-                const card = restoreCardFromState(stateClone, null);
-                if (card) card.classList.add('selected');
-            });
-            
-            // 批量恢复模板内原本绑定的连线关系
-            if (bundle.lines && bundle.lines.length > 0) {
-                bundle.lines.forEach(l => {
-                    const newLine = JSON.parse(JSON.stringify(l));
-                    newLine.id = 'line-' + Date.now() + Math.floor(Math.random() * 100002);
-                    // 🌟 使用映射后的新 ID 替换旧 ID
-                    newLine.from = idMap[l.from] || l.from;
-                    newLine.to = idMap[l.to] || l.to;
-                    lines.push(newLine);
-                });
-            }
+            restoreCardBundleAt(bundle, cx, cy, getActiveBoard());
             
             updateAllBoardCounts(); 
             updateMinimap(); 
@@ -6401,16 +6469,7 @@
                 }
                 const tplName = templateNameInput.value.trim() || '未命名模板';
                 
-                                const groupData = { cards: [], lines: [] };
-                const targetIds = new Set(targets.map(c => c.id));
-                
-                // 🌟 核心修复：改回 false！
-                // 第二个参数是 isNested，如果传 true 会导致不保存物理坐标(x,y)！
-                // serializeCard 本身就会一直保存 id，所以传 false 既能保存 id 也能保存坐标
-                targets.forEach(card => groupData.cards.push(serializeCard(card, false))); 
-                
-                const internalLines = lines.filter(l => targetIds.has(l.from) && targetIds.has(l.to));
-                groupData.lines = internalLines.map(l => ({...l}));
+                                const groupData = buildCardBundleFromTargets(targets);
                 
                 window.savedTemplates.push({ name: tplName, data: groupData });
                 localStorage.setItem('gemeni-templates', JSON.stringify(window.savedTemplates));
@@ -7184,20 +7243,7 @@
                     const pasteX = (menuLeft - rect.left - panX) / scale;
                     const pasteY = (menuTop - rect.top - panY) / scale;
 
-                    let minX = Infinity, minY = Infinity;
-                    cardClipboard.forEach(c => {
-                        if (c.x < minX) minX = c.x;
-                        if (c.y < minY) minY = c.y;
-                    });
-
-                    cardClipboard.forEach(state => {
-                        const newState = JSON.parse(JSON.stringify(state));
-                        newState.id = 'card-' + Date.now() + Math.floor(Math.random() * 100000);
-                        newState.x = pasteX + (state.x - minX);
-                        newState.y = pasteY + (state.y - minY);
-                        const newCard = restoreCardFromState(newState, null);
-                        if (newCard) newCard.classList.add('selected');
-                    });
+                    restoreCardBundleAt(cardClipboard, pasteX, pasteY, getActiveBoard());
                     updateMinimap(); scheduleSaveState();
                 } else {
                     if (typeof showToast === 'function') showToast('剪贴板为空，请先复制', 'warning');
@@ -7208,15 +7254,10 @@
                     ? Array.from(document.querySelectorAll('.card.selected'))
                     : (rightClickedCard ? [rightClickedCard] : []);
                 if (targets.length > 0) {
+                    const bundle = buildCardBundleFromTargets(targets);
+                    const bounds = getCardStatesBounds(bundle.cards);
                     clearCardSelection();
-                    targets.forEach(c => {
-                        const state = serializeCard(c, false);
-                        state.id = 'card-' + Date.now() + Math.floor(Math.random() * 100000);
-                        state.x += 40; // 偏移 40 像素营造层叠感
-                        state.y += 40;
-                        const newCard = restoreCardFromState(state, null);
-                        if (newCard) newCard.classList.add('selected');
-                    });
+                    restoreCardBundleAt(bundle, bounds.minX + 40, bounds.minY + 40, getActiveBoard());
                     updateMinimap(); scheduleSaveState();
                     if (typeof showToast === 'function') showToast(`已克隆 ${targets.length} 张卡片`, 'success');
                 }
