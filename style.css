@@ -581,8 +581,76 @@ body.dark-mode .text-color-dropdown {
     flex: 0 0 14px;
     cursor: grab;
     background: linear-gradient(180deg, rgba(0,0,0,0.04), rgba(0,0,0,0.01));
+    position: relative;
+    box-sizing: border-box;
 }
 .note-drag-handle:active { cursor: grabbing; }
+.note-title-preview {
+    display: none;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.2;
+}
+.note-collapse-btn {
+    position: absolute;
+    top: 2px;
+    right: 6px;
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.86);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+    z-index: 25;
+}
+.note-collapse-btn i { pointer-events: none; font-size: 11px; }
+.note-card:hover .note-collapse-btn,
+.note-card.selected .note-collapse-btn,
+.note-card.note-collapsed .note-collapse-btn {
+    opacity: 1;
+    pointer-events: auto;
+}
+.note-collapse-btn:hover {
+    background: rgba(91,130,251,0.12);
+    color: var(--primary-blue);
+}
+.note-card.note-collapsed {
+    min-height: 44px;
+}
+.note-card.note-collapsed::after {
+    display: none;
+}
+.note-card.note-collapsed .note-drag-handle {
+    height: 44px;
+    flex-basis: 44px;
+    display: flex;
+    align-items: center;
+    padding: 0 38px 0 14px;
+    background: transparent;
+}
+.note-card.note-collapsed .note-title-preview {
+    display: block;
+    flex: 1;
+}
+.note-card.note-collapsed .note-collapse-btn {
+    top: 50%;
+    transform: translateY(-50%);
+}
+.note-card.note-collapsed .md-editor {
+    display: none;
+}
 .md-source,
 .md-editor {
     flex: 1;
@@ -803,7 +871,11 @@ body.board-interaction-active .embedded-video-frame { pointer-events: none !impo
     flex: 1;
     padding: 15px;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    align-content: flex-start;
+    gap: 12px;
     overflow-y: visible;
     overflow-x: hidden;
     min-height: 100px;
@@ -813,7 +885,8 @@ body.board-interaction-active .embedded-video-frame { pointer-events: none !impo
 
 /* ================= iOS 风格占位动画 ================= */
 .column-drop-placeholder {
-    width: 100%;
+    width: var(--column-item-width, 100%);
+    flex: 0 0 var(--column-item-width, 100%);
     border-radius: 8px;
     background: rgba(91, 130, 251, 0.08);
     border: 2px dashed rgba(91, 130, 251, 0.4);
@@ -828,6 +901,12 @@ body.board-interaction-active .embedded-video-frame { pointer-events: none !impo
 }
 
 /* ================= 6. Table 卡片 ================= */
+.column-drop-zone > .card.nested-card {
+    width: var(--column-item-width, 100%) !important;
+    flex: 0 0 var(--column-item-width, 100%) !important;
+    margin-bottom: 0;
+}
+
 .table-card { min-width: 340px; min-height: 180px; overflow: hidden; padding: 0; }
 .table-wrap { overflow: auto; padding: 0 15px 15px; flex: 1; }
 .card-table { width: 100%; border-collapse: collapse; margin-top: 5px; }

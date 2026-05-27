@@ -2,4 +2,7 @@ node_modules/
 dist/
 _site/
 .env
+sync-config.js
 sync-config.local.js
+.claude/
+.idea/workspace.xml

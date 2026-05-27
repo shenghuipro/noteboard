@@ -964,7 +964,7 @@
 
         function updateNoteToolbar(card = getSelectedNoteCard()) {
             const toolbar = document.getElementById('noteToolbar');
-            if (card) {
+            if (card && !isNoteCollapsed(card)) {
                 if (toolbar) toolbar.style.display = 'flex';
                 const appearance = getNoteCardAppearance(card);
                 if (noteBgColorInput) noteBgColorInput.value = appearance.backgroundColor;
@@ -1044,8 +1044,135 @@
         }
 
         // 核心修复：重新补回被意外删掉的函数声明
+        const NOTE_COLLAPSED_HEIGHT = 44;
+
+        function isNoteCollapsed(card) {
+            return !!card && card.classList.contains('note-card') && card.dataset.collapsed === 'true';
+        }
+
+        function getNoteTitleText(card) {
+            const editor = card?.querySelector('.md-editor');
+            if (!editor) return '未命名笔记';
+            const readText = (node) => (node.innerText || node.textContent || '')
+                .replace(/\u200B/g, '')
+                .split('\n')
+                .map(line => line.trim())
+                .find(Boolean);
+
+            for (const child of editor.childNodes) {
+                if (child.nodeType === Node.TEXT_NODE) {
+                    const text = child.textContent.replace(/\u200B/g, '').trim();
+                    if (text) return text;
+                } else if (child.nodeType === Node.ELEMENT_NODE) {
+                    const titleSource = child.matches?.('ul, ol') ? child.querySelector('li') : child;
+                    const text = readText(titleSource || child);
+                    if (text) return text;
+                }
+            }
+
+            return readText(editor) || '未命名笔记';
+        }
+
+        function syncNoteCollapsedTitle(card) {
+            const title = card?.querySelector('.note-title-preview');
+            if (!title) return;
+            title.textContent = getNoteTitleText(card);
+        }
+
+        function updateNoteCollapseButton(card) {
+            const btn = card?.querySelector('.note-collapse-btn');
+            if (!btn) return;
+            const collapsed = isNoteCollapsed(card);
+            btn.title = collapsed ? '展开' : '折叠';
+            btn.setAttribute('aria-label', collapsed ? '展开笔记' : '折叠笔记');
+            btn.innerHTML = collapsed ? '<i class="fa-solid fa-chevron-down"></i>' : '<i class="fa-solid fa-chevron-up"></i>';
+        }
+
+        function setNoteCollapsed(card, collapsed, options = {}) {
+            if (!card || !card.classList.contains('note-card')) return false;
+            const nextCollapsed = !!collapsed;
+            const wasCollapsed = isNoteCollapsed(card);
+            const editor = card.querySelector('.md-editor');
+
+            if (nextCollapsed) {
+                if (!options.preserveExpandedHeight || !card.dataset.expandedHeight) {
+                    const expandedHeight = parseFloat(card.style.height) || card.offsetHeight || getDefaultCardMetric('note', 'height');
+                    if (Number.isFinite(expandedHeight) && expandedHeight > NOTE_COLLAPSED_HEIGHT) {
+                        card.dataset.expandedHeight = String(Math.round(expandedHeight));
+                    }
+                    card.dataset.expandedManualHeight = card.dataset.manualHeight === 'true' ? 'true' : 'false';
+                }
+                card.classList.remove('is-editing');
+                if (editor) editor.setAttribute('contenteditable', 'false');
+                syncNoteCollapsedTitle(card);
+                card.dataset.collapsed = 'true';
+                card.classList.add('note-collapsed');
+                card.style.height = `${NOTE_COLLAPSED_HEIGHT}px`;
+            } else {
+                delete card.dataset.collapsed;
+                card.classList.remove('note-collapsed');
+                const expandedHeight = parseFloat(card.dataset.expandedHeight);
+                const wasManualHeight = card.dataset.expandedManualHeight === 'true';
+                if (Number.isFinite(expandedHeight) && expandedHeight > NOTE_COLLAPSED_HEIGHT) {
+                    card.style.height = `${expandedHeight}px`;
+                }
+                if (wasManualHeight) card.dataset.manualHeight = 'true';
+                else delete card.dataset.manualHeight;
+                autoGrowNoteCard(card);
+            }
+
+            updateNoteCollapseButton(card);
+            updateNoteToolbar(card.classList.contains('selected') ? card : null);
+
+            if (!options.skipSave && wasCollapsed !== nextCollapsed) {
+                updateMinimap();
+                renderLines();
+                scheduleSaveState();
+            }
+            return wasCollapsed !== nextCollapsed;
+        }
+
+        function toggleNoteCollapsed(card) {
+            return setNoteCollapsed(card, !isNoteCollapsed(card));
+        }
+
+        function bindNoteCollapseControl(card) {
+            const btn = card?.querySelector('.note-collapse-btn');
+            if (!btn) return;
+            btn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            });
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleNoteCollapsed(card);
+            });
+            syncNoteCollapsedTitle(card);
+            updateNoteCollapseButton(card);
+        }
+
+        function setNoteCardsCollapsed(cards, collapsed) {
+            const notes = Array.from(cards || []).filter(card => card?.classList?.contains('note-card'));
+            let changed = 0;
+            notes.forEach(card => {
+                if (setNoteCollapsed(card, collapsed, { skipSave: true })) changed++;
+            });
+            if (changed > 0) {
+                updateMinimap();
+                renderLines();
+                scheduleSaveState();
+            }
+            return changed;
+        }
+
         function autoGrowNoteCard(card) {
             if (!card || !card.classList.contains('note-card')) return;
+            if (isNoteCollapsed(card)) {
+                syncNoteCollapsedTitle(card);
+                card.style.height = `${NOTE_COLLAPSED_HEIGHT}px`;
+                return;
+            }
             if (card.classList.contains('nested-card')) { card.style.height = 'auto'; return; }
             const editor = card.querySelector('.md-editor');
             if (!editor) return;
@@ -1116,6 +1243,7 @@
 
         function focusNoteEditor(card, placeCaret = false) {
             if (!card) return;
+            if (isNoteCollapsed(card)) return;
             clearCardSelection();
             card.classList.add('selected');
             card.classList.add('is-editing');
@@ -1314,6 +1442,7 @@
             if (normalizeHtmlString(editor.innerHTML) !== normalizeHtmlString(html)) {
                 editor.innerHTML = html;
             }
+            syncNoteCollapsedTitle(card);
 
             if (preserveCaret && caretOffset !== null) setSelectionTextOffsetWithin(editor, caretOffset);
 
@@ -1351,6 +1480,7 @@
             else if (command === 'ol') document.execCommand('insertOrderedList', false, null);
 
             card.dataset.markdown = deriveMarkdownFromHtml(editor.innerHTML);
+            syncNoteCollapsedTitle(card);
             autoGrowNoteCard(card);
             updateMinimap();
             scheduleSaveState();
@@ -1835,10 +1965,14 @@
             card.dataset.markdown = deriveMarkdownFromHtml(initialHtml);
 
             card.innerHTML = `
-                <div class="note-drag-handle"></div>
+                <div class="note-drag-handle">
+                    <div class="note-title-preview"></div>
+                    <button type="button" class="note-collapse-btn" title="折叠" aria-label="折叠笔记"><i class="fa-solid fa-chevron-up"></i></button>
+                </div>
                 <div class="md-editor" contenteditable="false">${initialHtml}</div>`;
 
             applyNoteAppearance(card, noteAppearance?.accentColor || noteDefaults.accentColor, noteAppearance?.backgroundColor || noteDefaults.backgroundColor);
+            bindNoteCollapseControl(card);
             const attached = attachAndReturn(card, '.md-editor');
             autoGrowNoteCard(attached);
             return attached;
@@ -3094,6 +3228,11 @@
                     else if (type === 'file') { dropZone.appendChild(createFileCard(0,0, child.dataset.filename, child.dataset.fileType, child.dataset.fileSize, child.dataset.fileData, child.querySelector('.pdf-note-area')?.innerHTML || "", 0, 'auto', true)); }
 
                 });
+                Array.from(dropZone.children).forEach((nestedCard, index) => {
+                    const sourceChild = tempDiv.children[index];
+                    if (sourceChild?.dataset?.columnRow) nestedCard.dataset.columnRow = sourceChild.dataset.columnRow;
+                });
+                normalizeColumnLayout(dropZone);
             }
             return attached;
         }
@@ -4292,12 +4431,18 @@
             if (cardState.lastModified) card.dataset.lastModified = cardState.lastModified;
 
             if (parentColumn) {
-                applyNestedCardLayout(card); parentColumn.querySelector('.column-drop-zone').appendChild(card);
+                applyNestedCardLayout(card);
+                if (cardState.columnRow) card.dataset.columnRow = cardState.columnRow;
+                parentColumn.querySelector('.column-drop-zone').appendChild(card);
             } else {
                 applyRootCardLayout(card, cardState);
             }
             if (cardState.type === 'note') {
-                applyNoteAppearance(card, cardState.accentColor, cardState.backgroundColor); autoGrowNoteCard(card);
+                applyNoteAppearance(card, cardState.accentColor, cardState.backgroundColor);
+                if (Number.isFinite(Number(cardState.expandedHeight))) card.dataset.expandedHeight = String(Number(cardState.expandedHeight));
+                if (cardState.expandedManualHeight !== undefined) card.dataset.expandedManualHeight = cardState.expandedManualHeight ? 'true' : 'false';
+                if (cardState.collapsed) setNoteCollapsed(card, true, { skipSave: true, preserveExpandedHeight: true });
+                else autoGrowNoteCard(card);
             }
             if (cardState.type === 'todo') {
                 autoGrowTodoCard(card); // 核心注入：读取存档时自适应 Todo 高度
@@ -4309,6 +4454,7 @@
 
             if (cardState.type === 'column' && Array.isArray(cardState.children)) {
                 cardState.children.forEach(childState => restoreCardFromState(childState, card));
+                normalizeColumnLayout(card);
             }
             return card;
         }
@@ -4321,7 +4467,11 @@
                 if (cardState.fontSize) card.querySelector('.heading-text').style.fontSize = cardState.fontSize;
                 return card;
             }
-            if (cardState.type === 'note') return createNoteCard(x, y, cardState.html || "", width || 280, height || 180, isNested, cardState);
+            if (cardState.type === 'note') {
+                const expandedHeight = Number(cardState.expandedHeight);
+                const noteHeight = cardState.collapsed && Number.isFinite(expandedHeight) ? expandedHeight : (height || 180);
+                return createNoteCard(x, y, cardState.html || "", width || 280, noteHeight, isNested, cardState);
+            }
             if (cardState.type === 'link') return createLinkCard(x, y, cardState.url || "", isNested, cardState.articleClip || null);
             if (cardState.type === 'todo') return createTodoCard(x, y, cardState.itemsHtml || "", width || 260, height || 160, isNested);
             if (cardState.type === 'board') return createBoardCard(x, y, cardState.title || "New Board", "", cardState.id || null, cardState);
@@ -4355,6 +4505,161 @@
             card.style.height = 'auto'; // 修改为 auto，自适应预览高度
         }
 
+        const COLUMN_INLINE_GAP = 12;
+        const COLUMN_MAX_INLINE_ITEMS = 3;
+        let columnRowCounter = 0;
+
+        function createColumnRowId() {
+            return `column-row-${Date.now()}-${columnRowCounter++}`;
+        }
+
+        function getColumnItemWidth(count) {
+            const columns = Math.max(1, Math.min(COLUMN_MAX_INLINE_ITEMS, count || 1));
+            if (columns === 1) return '100%';
+            return `calc((100% - ${COLUMN_INLINE_GAP * (columns - 1)}px) / ${columns})`;
+        }
+
+        function getColumnDropZone(columnOrDropZone) {
+            if (!columnOrDropZone) return null;
+            if (columnOrDropZone.classList?.contains('column-drop-zone')) return columnOrDropZone;
+            return columnOrDropZone.querySelector?.('.column-drop-zone') || null;
+        }
+
+        function getColumnDirectCards(dropZone, excludedCards = []) {
+            const excluded = new Set(excludedCards);
+            return Array.from(dropZone?.children || []).filter(child =>
+                child.classList?.contains('card') &&
+                child.classList.contains('nested-card') &&
+                !excluded.has(child)
+            );
+        }
+
+        function getColumnRowGroups(dropZone, excludedCards = []) {
+            const cards = getColumnDirectCards(dropZone, excludedCards);
+            const groups = [];
+            cards.forEach((card, index) => {
+                const rowId = card.dataset.columnRow || `__single_${index}`;
+                const last = groups[groups.length - 1];
+                if (last && last.rowId === rowId) {
+                    last.cards.push(card);
+                } else {
+                    groups.push({ rowId, cards: [card], synthetic: !card.dataset.columnRow });
+                }
+            });
+
+            groups.forEach(group => {
+                const rects = group.cards.map(card => card.getBoundingClientRect());
+                group.top = Math.min(...rects.map(rect => rect.top));
+                group.bottom = Math.max(...rects.map(rect => rect.bottom));
+                group.left = Math.min(...rects.map(rect => rect.left));
+                group.right = Math.max(...rects.map(rect => rect.right));
+                group.height = Math.max(1, group.bottom - group.top);
+            });
+            return groups;
+        }
+
+        function normalizeColumnLayout(columnOrDropZone) {
+            const dropZone = getColumnDropZone(columnOrDropZone);
+            if (!dropZone) return;
+            const cards = getColumnDirectCards(dropZone);
+            let currentRowId = null;
+            let currentGroup = [];
+            const groups = [];
+
+            const flush = () => {
+                if (currentGroup.length) groups.push(currentGroup);
+                currentGroup = [];
+            };
+
+            cards.forEach(card => {
+                if (!card.dataset.columnRow) card.dataset.columnRow = createColumnRowId();
+                if (currentRowId !== card.dataset.columnRow) {
+                    flush();
+                    currentRowId = card.dataset.columnRow;
+                }
+                currentGroup.push(card);
+            });
+            flush();
+
+            groups.forEach(group => {
+                for (let i = 0; i < group.length; i += COLUMN_MAX_INLINE_ITEMS) {
+                    const chunk = group.slice(i, i + COLUMN_MAX_INLINE_ITEMS);
+                    const rowId = i === 0 ? chunk[0].dataset.columnRow : createColumnRowId();
+                    const width = getColumnItemWidth(chunk.length);
+                    chunk.forEach(card => {
+                        card.dataset.columnRow = rowId;
+                        card.style.setProperty('--column-item-width', width);
+                    });
+                }
+            });
+        }
+
+        function getColumnDropPlan(dropZone, clientX, clientY, incomingCount = 1, excludedCards = []) {
+            const groups = getColumnRowGroups(dropZone, excludedCards);
+            const safeIncomingCount = Math.max(1, incomingCount || 1);
+            if (groups.length === 0) {
+                return { mode: 'new-row', rowId: createColumnRowId(), beforeEl: null, previewCount: Math.min(safeIncomingCount, COLUMN_MAX_INLINE_ITEMS) };
+            }
+
+            for (let i = 0; i < groups.length; i++) {
+                const group = groups[i];
+                const beforeNextRow = groups[i + 1]?.cards[0] || null;
+                const edgeBand = Math.min(28, Math.max(12, group.height * 0.24));
+
+                if (clientY < group.top + edgeBand) {
+                    return { mode: 'new-row', rowId: createColumnRowId(), beforeEl: group.cards[0], previewCount: Math.min(safeIncomingCount, COLUMN_MAX_INLINE_ITEMS) };
+                }
+
+                if (clientY <= group.bottom - edgeBand) {
+                    const canJoinRow = group.cards.length + safeIncomingCount <= COLUMN_MAX_INLINE_ITEMS;
+                    if (canJoinRow) {
+                        let beforeEl = beforeNextRow;
+                        for (const card of group.cards) {
+                            const rect = card.getBoundingClientRect();
+                            if (clientX < rect.left + rect.width / 2) {
+                                beforeEl = card;
+                                break;
+                            }
+                        }
+                        return {
+                            mode: 'join-row',
+                            rowId: group.synthetic ? createColumnRowId() : group.rowId,
+                            rowCards: group.cards,
+                            beforeEl,
+                            previewCount: group.cards.length + safeIncomingCount
+                        };
+                    }
+                    return { mode: 'new-row', rowId: createColumnRowId(), beforeEl: beforeNextRow, previewCount: Math.min(safeIncomingCount, COLUMN_MAX_INLINE_ITEMS) };
+                }
+
+                if (clientY <= group.bottom + edgeBand) {
+                    return { mode: 'new-row', rowId: createColumnRowId(), beforeEl: beforeNextRow, previewCount: Math.min(safeIncomingCount, COLUMN_MAX_INLINE_ITEMS) };
+                }
+            }
+
+            return { mode: 'new-row', rowId: createColumnRowId(), beforeEl: null, previewCount: Math.min(safeIncomingCount, COLUMN_MAX_INLINE_ITEMS) };
+        }
+
+        function placeCardsInColumn(dropZone, cards, plan) {
+            if (!dropZone || !cards?.length) return;
+            const targetPlan = plan || { mode: 'new-row', rowId: createColumnRowId(), beforeEl: null, previewCount: Math.min(cards.length, COLUMN_MAX_INLINE_ITEMS) };
+            const rowId = targetPlan.rowId || createColumnRowId();
+            if (targetPlan.mode === 'join-row') {
+                (targetPlan.rowCards || []).forEach(card => { card.dataset.columnRow = rowId; });
+            }
+
+            cards.forEach(card => {
+                applyNestedCardLayout(card);
+                card.dataset.columnRow = rowId;
+                if (targetPlan.beforeEl && targetPlan.beforeEl.parentNode === dropZone) {
+                    dropZone.insertBefore(card, targetPlan.beforeEl);
+                } else {
+                    dropZone.appendChild(card);
+                }
+            });
+            normalizeColumnLayout(dropZone);
+        }
+
         function serializeCard(card, isNested = false) {
             const type = card.dataset.type;
             const state = {
@@ -4366,6 +4671,7 @@
                 lastModified: card.dataset.lastModified || Date.now() // 🌟 核心新增：持久化审查时间
             };
             if (!isNested) { state.x = parseFloat(card.style.left) || 0; state.y = parseFloat(card.style.top) || 0; }
+            else if (card.dataset.columnRow) { state.columnRow = card.dataset.columnRow; }
             if (type === 'heading') {
                 const textEl = card.querySelector('.heading-text');
                 state.html = textEl.innerHTML;
@@ -4373,6 +4679,12 @@
             } else if (type === 'note') {
                 state.html = card.querySelector('.md-editor').innerHTML;
                 const appearance = getNoteCardAppearance(card); state.accentColor = appearance.accentColor; state.backgroundColor = appearance.backgroundColor;
+                state.collapsed = isNoteCollapsed(card);
+                if (state.collapsed) {
+                    const expandedHeight = parseFloat(card.dataset.expandedHeight);
+                    state.expandedHeight = Number.isFinite(expandedHeight) ? expandedHeight : state.height;
+                    state.expandedManualHeight = card.dataset.expandedManualHeight === 'true';
+                }
             } else if (type === 'link') {
                 state.url = card.querySelector('.link-input').value;
                 const articleClip = getLinkClipData(card);
@@ -4760,6 +5072,7 @@
                         if (formulaMatch && !textBeforeCursor.endsWith('$$')) { const r = document.createRange(); r.setStart(node, offset - formulaMatch[0].length); r.setEnd(node, offset); sel.removeAllRanges(); sel.addRange(r); document.execCommand('insertHTML', false, `<span class="inline-formula" data-formula="${escapeAttribute(formulaMatch[1])}">${escapeHtml(formulaMatch[1])}</span>\u200B`); return; }
                     }
                     card.dataset.markdown = deriveMarkdownFromHtml(editor.innerHTML);
+                    syncNoteCollapsedTitle(card);
                     autoGrowNoteCard(card); updateMinimap(); scheduleSaveState();
                 });
                 editor.addEventListener('paste', (e) => {
@@ -5055,6 +5368,7 @@
                         const c = item.el;
                         if (item.isNested) {
                             const rect = item.initialRect;
+                            const sourceDropZone = c.parentElement?.closest('.column-drop-zone');
 
                             // 核心新增：iOS风格“拔出”残影
                             const leavePlaceholder = document.createElement('div');
@@ -5071,7 +5385,10 @@
                             });
 
                             c.classList.remove('nested-card');
+                            delete c.dataset.columnRow;
+                            c.style.removeProperty('--column-item-width');
                             canvas.appendChild(c);
+                            normalizeColumnLayout(sourceDropZone);
                             const worldPos = { x: (rect.left - viewport.getBoundingClientRect().left - panX)/scale, y: (rect.top - viewport.getBoundingClientRect().top - panY)/scale };
                             c.style.left = worldPos.x + 'px';
                             c.style.top = worldPos.y + 'px';
@@ -5133,13 +5450,12 @@
                             placeholder.className = 'column-drop-placeholder';
                         }
                         const dropZone = hoveredColumn.querySelector('.column-drop-zone');
-                        let beforeEl = null;
+                        const draggedEls = draggedCards.map(item => item.el);
+                        const dropPlan = getColumnDropPlan(dropZone, e.clientX, e.clientY, draggedEls.length, draggedEls);
+                        placeholder._columnDropPlan = dropPlan;
+                        placeholder.style.setProperty('--column-item-width', getColumnItemWidth(dropPlan.previewCount));
+                        const beforeEl = dropPlan.beforeEl;
                         // 寻找插入点，排除正在拖拽的卡片
-                        const children = [...dropZone.children].filter(c => c.classList.contains('card') && !draggedCards.some(d => d.el === c));
-                        for (let child of children) {
-                            const box = child.getBoundingClientRect();
-                            if (e.clientY < box.top + box.height / 2) { beforeEl = child; break; }
-                        }
 
                         // 如果位置改变，重置高度以重新触发撑开动画
                         if (placeholder.nextElementSibling !== beforeEl || placeholder.parentNode !== dropZone) {
@@ -5155,7 +5471,7 @@
                         // 由于刚才我们在拔出时强制同步了真实物理尺寸，现在的卡片 offsetHeight 就是绝对完美的，不再需要任何补偿代码！
                         const targetHeight = draggedCards[0] ? (draggedCards[0].el.offsetHeight || 100) : 100;
                         placeholder.style.height = targetHeight + 'px';
-                        placeholder.style.marginBottom = '12px';
+                        placeholder.style.marginBottom = '0px';
                         placeholder.style.opacity = '1';
                     } else {
                         if (placeholder) placeholder.remove();
@@ -5268,20 +5584,11 @@
                             c.dataset.origWidth = c.style.width || c.offsetWidth + 'px';
                             c.dataset.origHeight = c.style.height || c.offsetHeight + 'px';
 
-                            c.classList.add('nested-card'); c.style.left = 'auto'; c.style.top = 'auto'; c.style.width = '100%'; c.style.height = 'auto';
                             const dropZone = droppedInColumn.querySelector('.column-drop-zone');
+                            const dropPlan = placeholder?._columnDropPlan || getColumnDropPlan(dropZone, e.clientX, e.clientY, draggedCards.length, draggedCards.map(d => d.el));
+                            placeCardsInColumn(dropZone, [c], dropPlan);
 
                             // 优先替换占位符
-                            if (placeholder && placeholder.parentNode === dropZone) {
-                                dropZone.insertBefore(c, placeholder);
-                            } else {
-                                let beforeEl = null; const children = [...dropZone.querySelectorAll('.card.nested-card')];
-                                for (let child of children) {
-                                    if (draggedCards.some(d => d.el === child)) continue;
-                                    const box = child.getBoundingClientRect(); if (e.clientY < box.top + box.height / 2) { beforeEl = child; break; }
-                                }
-                                if (beforeEl) dropZone.insertBefore(c, beforeEl); else dropZone.appendChild(c);
-                            }
                         } else { c.dataset.boardId = getActiveBoard(); }
                     });
 
@@ -5499,11 +5806,8 @@
             if (newCard && isNested && source !== 'board' && source !== 'column') {
                 newCard.dataset.boardId = droppedInColumn.dataset.boardId;
                 const dropZone = droppedInColumn.querySelector('.column-drop-zone');
-                let beforeEl = null; const children = [...dropZone.querySelectorAll('.card.nested-card')];
-                for (let child of children) {
-                    const box = child.getBoundingClientRect(); if (e.clientY < box.top + box.height / 2) { beforeEl = child; break; }
-                }
-                if (beforeEl) dropZone.insertBefore(newCard, beforeEl); else dropZone.appendChild(newCard);
+                const dropPlan = getColumnDropPlan(dropZone, e.clientX, e.clientY, 1, [newCard]);
+                placeCardsInColumn(dropZone, [newCard], dropPlan);
             }
             updateAllBoardCounts(); updateMinimap();
         });
@@ -6057,6 +6361,7 @@
                                 const noteCard = parentEditor.closest('.note-card');
                                 if (noteCard && typeof deriveMarkdownFromHtml === 'function') {
                                     noteCard.dataset.markdown = deriveMarkdownFromHtml(parentEditor.innerHTML);
+                                    syncNoteCollapsedTitle(noteCard);
                                 }
                             }
                         }
@@ -6648,6 +6953,7 @@
                             if (noteEditor) {
                                 const card = noteEditor.closest('.note-card');
                                 card.dataset.markdown = deriveMarkdownFromHtml(noteEditor.innerHTML);
+                                syncNoteCollapsedTitle(card);
                                 autoGrowNoteCard(card); scheduleSaveState();
                             }
                         }
@@ -6745,6 +7051,7 @@
                         sel.addRange(keepRange);
 
                         noteCard.dataset.markdown = deriveMarkdownFromHtml(editor.innerHTML);
+                        syncNoteCollapsedTitle(noteCard);
                         autoGrowNoteCard(noteCard);
                         scheduleSaveState();
                     }
@@ -6755,6 +7062,7 @@
             if (noteEditor) {
                 const card = noteEditor.closest('.note-card');
                 card.dataset.markdown = deriveMarkdownFromHtml(noteEditor.innerHTML);
+                syncNoteCollapsedTitle(card);
                 autoGrowNoteCard(card); scheduleSaveState();
             }
         });
@@ -6774,6 +7082,7 @@
             if (noteEditor) {
                 const card = noteEditor.closest('.note-card');
                 card.dataset.markdown = deriveMarkdownFromHtml(noteEditor.innerHTML);
+                syncNoteCollapsedTitle(card);
                 scheduleSaveState();
             }
         }
@@ -6781,6 +7090,26 @@
         const contextMenu = document.getElementById('contextMenu');
         let rightClickedCard = null;
         let cardClipboard = []; // 🌟 核心新增：全局白板剪贴板变量
+
+        function getContextCardTargets() {
+            const selected = Array.from(document.querySelectorAll('.card.selected'));
+            if (selected.length > 0) return selected;
+            return rightClickedCard ? [rightClickedCard] : [];
+        }
+
+        function getContextNoteTargets() {
+            return getContextCardTargets().filter(card => card.classList.contains('note-card'));
+        }
+
+        function updateNoteCollapseMenuItems() {
+            const notes = getContextNoteTargets();
+            const collapseItem = document.getElementById('ctxCollapseNotes');
+            const expandItem = document.getElementById('ctxExpandNotes');
+            const hasExpanded = notes.some(card => !isNoteCollapsed(card));
+            const hasCollapsed = notes.some(card => isNoteCollapsed(card));
+            if (collapseItem) collapseItem.style.display = hasExpanded ? 'flex' : 'none';
+            if (expandItem) expandItem.style.display = hasCollapsed ? 'flex' : 'none';
+        }
 
         // 1. 全局点击事件：隐藏各类弹窗及选中连线
         document.addEventListener('click', (e) => {
@@ -6997,6 +7326,7 @@
             }
 
             // 核心修复：必须先让菜单 display: block，才能获取到它真实的物理宽高
+            updateNoteCollapseMenuItems();
             contextMenu.classList.add('show');
             contextMenu.classList.remove('open-left'); // 重置向左展开的标识
 
@@ -7261,6 +7591,12 @@
                     updateMinimap(); scheduleSaveState();
                     if (typeof showToast === 'function') showToast(`已克隆 ${targets.length} 张卡片`, 'success');
                 }
+            } else if (action === 'collapseNotes') {
+                const count = setNoteCardsCollapsed(getContextNoteTargets(), true);
+                if (count > 0 && typeof showToast === 'function') showToast(`已折叠 ${count} 张 Note`, 'success');
+            } else if (action === 'expandNotes') {
+                const count = setNoteCardsCollapsed(getContextNoteTargets(), false);
+                if (count > 0 && typeof showToast === 'function') showToast(`已展开 ${count} 张 Note`, 'success');
             } else if (action === 'addComment' && rightClickedCard) {
                 // 🌟 核心修复：确保父级卡片拥有唯一 ID，防止删除时找不到绑定关系
                 if (!rightClickedCard.id) {
