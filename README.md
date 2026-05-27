@@ -2,8 +2,8 @@
 
 **English** | [中文](#chinese)
 
-A visual whiteboard for notes, links, video transcripts, and collaborative ideas.
-一款集笔记、链接、视频转录与协作于一体的视觉白板。
+A visual whiteboard for notes, links, and collaborative ideas.
+一款集笔记、链接与协作于一体的视觉白板。
 
 ---
 
